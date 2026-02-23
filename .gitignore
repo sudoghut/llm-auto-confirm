@@ -1,0 +1,4 @@
+templates/*.png
+.claude/
+.vscode/
+.auto_confirm.pid
