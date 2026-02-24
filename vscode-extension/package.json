@@ -1,0 +1,128 @@
+{
+  "name": "llm-auto-confirm",
+  "displayName": "LLM Auto Confirm",
+  "description": "Auto-click confirmation/approval buttons for LLM coding assistants (Claude, Copilot, Cursor, etc.) via Chrome DevTools Protocol",
+  "version": "0.1.0",
+  "publisher": "sudoghut",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sudoghut/llm-auto-confirm"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "llm-auto-confirm.start",
+        "title": "LLM Auto Confirm: Start"
+      },
+      {
+        "command": "llm-auto-confirm.stop",
+        "title": "LLM Auto Confirm: Stop"
+      },
+      {
+        "command": "llm-auto-confirm.toggle",
+        "title": "LLM Auto Confirm: Toggle"
+      }
+    ],
+    "configuration": {
+      "title": "LLM Auto Confirm",
+      "properties": {
+        "llmAutoConfirm.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable auto-confirmation on startup"
+        },
+        "llmAutoConfirm.pollingInterval": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 30000,
+          "description": "DOM polling interval in milliseconds"
+        },
+        "llmAutoConfirm.debugPort": {
+          "type": "number",
+          "default": 9222,
+          "description": "Chrome DevTools Protocol remote debugging port"
+        },
+        "llmAutoConfirm.buttonSelectors": {
+          "type": "array",
+          "default": [
+            "button[title*='Allow']",
+            "button[title*='Accept']",
+            "button[title*='Proceed']",
+            "button[title*='Yes']",
+            "button[title*='Continue']",
+            "button[title*='Run']",
+            "div.cursor-button-primary",
+            "a.monaco-button[title*='Allow']",
+            "a.monaco-button[title*='Accept']",
+            "a.monaco-button[title*='Yes']",
+            "a.monaco-button[title*='Continue']"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "CSS selectors for confirmation buttons to auto-click"
+        },
+        "llmAutoConfirm.buttonTextPatterns": {
+          "type": "array",
+          "default": [
+            "Allow",
+            "Accept",
+            "Proceed",
+            "Yes",
+            "Continue",
+            "Run command",
+            "Approve"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Button text patterns to match (case-insensitive)"
+        },
+        "llmAutoConfirm.dangerousCommandPatterns": {
+          "type": "array",
+          "default": [
+            "rm -rf /",
+            "rm -rf ~",
+            "format c:",
+            ":(){ :|:& };:",
+            "dd if=/dev/zero",
+            "> /dev/sda",
+            "mkfs\\."
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Regex patterns for dangerous commands that should NOT be auto-approved"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run bundle",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run bundle -- --watch",
+    "package": "npm run bundle && vsce package",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

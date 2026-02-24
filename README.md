@@ -1,45 +1,48 @@
 # LLM Auto-Confirm
 
-Automatically clicks confirmation/approval buttons for LLM coding assistants (Claude, GitHub Copilot, Cursor, Cody, etc.) in any IDE or application. Stay hands-free while your AI assistant works.
+Automatically clicks confirmation/approval buttons for LLM coding assistants (Claude, GitHub Copilot, Cursor, Cody, etc.). Stay hands-free while your AI assistant works.
 
-Uses OpenCV template matching to find buttons on screen and PyAutoGUI to click them.
+Two approaches included:
 
-## How It Works
+| | Python Script | VS Code Extension |
+|---|---|---|
+| **Technique** | Screenshot + OpenCV template matching | Chrome DevTools Protocol (CDP) |
+| **Mouse movement** | Briefly moves & restores | None |
+| **Works minimized** | No | Yes |
+| **CPU usage** | Higher (screen capture) | Lower (DOM query) |
+| **Setup** | Just run | Needs `--remote-debugging-port` |
+| **Scope** | Any app on screen | IDE only (VS Code, Cursor) |
 
-1. You capture a screenshot template of the button you want to auto-click (e.g. "Yes, Allow", "Proceed", "Accept").
-2. The script continuously screenshots your display, searches for the template, and clicks it when found.
-3. A configurable confidence threshold prevents false positives.
+---
 
-## Requirements
+## Option 1: Python Script (Universal)
+
+Works with any application — captures a screenshot template of a button, then continuously monitors the screen and clicks it when found.
+
+### Requirements
 
 - **OS:** Windows or macOS
 - **Python:** 3.8+
-- Dependencies are auto-installed on first run:
-  - `pyautogui`
-  - `opencv-python`
-  - `Pillow`
-  - `numpy`
-
-### Platform Notes
+- Dependencies are auto-installed on first run: `pyautogui`, `opencv-python`, `Pillow`, `numpy`
 
 | Platform | Notes |
 |---|---|
 | **Windows** | DPI awareness is handled automatically. |
 | **macOS** | Retina display coordinates are handled automatically. You may need to grant **Screen Recording** and **Accessibility** permissions in System Settings > Privacy & Security. |
 
-## Quick Start
+### Quick Start
 
 ```bash
-# 1. Capture a button template (a GUI window will open for you to select the button region)
+# 1. Capture a button template (a GUI will open for region selection)
 python auto_confirm.py --capture
 
 # 2. Start monitoring and auto-clicking
 python auto_confirm.py
 ```
 
-Press `Ctrl+C` to stop. You can also move your mouse to the top-left corner of the screen for an emergency stop (PyAutoGUI failsafe).
+Press `Ctrl+C` to stop. Move mouse to the top-left corner for emergency stop (PyAutoGUI failsafe).
 
-## Usage
+### Usage
 
 ```
 python auto_confirm.py [options]
@@ -47,45 +50,94 @@ python auto_confirm.py [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--capture [NAME]`, `-c` | — | Capture a button template. Optionally provide a name (default: `confirm`). |
-| `--confidence FLOAT` | `0.85` | Template matching confidence threshold (0.0–1.0). Lower = more lenient. |
+| `--capture [NAME]`, `-c` | — | Capture a button template (default name: `confirm`). |
+| `--confidence FLOAT` | `0.85` | Match confidence threshold (0.0–1.0). Lower = more lenient. |
 | `--interval FLOAT` | `0.5` | Screen check interval in seconds. |
-| `--cooldown FLOAT` | `2.0` | Cooldown after each click in seconds to prevent double-clicks. |
+| `--cooldown FLOAT` | `2.0` | Cooldown after each click in seconds. |
 | `--list`, `-l` | — | List all saved templates. |
 
-## Examples
+### Examples
 
 ```bash
-# Capture a template named "allow"
-python auto_confirm.py --capture allow
-
-# Run with lower confidence (matches more easily)
-python auto_confirm.py --confidence 0.8
-
-# Check more frequently with shorter cooldown
-python auto_confirm.py --interval 0.3 --cooldown 1.0
-
-# List saved templates
-python auto_confirm.py --list
+python auto_confirm.py --capture allow           # Capture a template named "allow"
+python auto_confirm.py --confidence 0.8           # Lower threshold
+python auto_confirm.py --interval 0.3 --cooldown 1.0  # Faster checking
+python auto_confirm.py --list                     # List saved templates
 ```
 
-## Templates
+### Templates
 
-Templates are stored as `.png` files in the `templates/` directory. You can capture multiple templates — the script loads all of them and matches against the best one each cycle.
-
-This makes it easy to handle different buttons across different tools:
+Stored as `.png` files in `templates/`. Capture multiple for different tools:
 
 ```bash
-python auto_confirm.py --capture claude_allow    # Claude's "Allow" button
-python auto_confirm.py --capture copilot_accept  # Copilot's "Accept" button
-python auto_confirm.py --capture cursor_yes      # Cursor's "Yes" button
+python auto_confirm.py --capture claude_allow
+python auto_confirm.py --capture copilot_accept
+python auto_confirm.py --capture cursor_yes
 ```
 
-## Safety
+### Safety
 
-- **Failsafe:** Quickly move your mouse to the top-left corner of the screen to trigger PyAutoGUI's emergency stop.
-- **Cooldown:** After each click, the script waits before clicking again to avoid rapid repeated clicks.
-- **Confidence threshold:** Only clicks when the match confidence exceeds the configured threshold.
+- **Failsafe:** Move mouse to top-left corner to trigger PyAutoGUI's emergency stop.
+- **Cooldown:** Prevents rapid repeated clicks.
+- **Confidence threshold:** Only clicks when confidence exceeds the threshold.
+- **Duplicate detection:** Only one instance can run at a time (PID file lock).
+- **Desktop notification:** Notifies you when monitoring stops.
+
+---
+
+## Option 2: VS Code Extension (CDP-based)
+
+Connects to the IDE's renderer process via Chrome DevTools Protocol. Polls the DOM for confirmation buttons and clicks them programmatically — no mouse movement, works even when minimized.
+
+### Setup
+
+**1. Launch IDE with remote debugging:**
+
+```bash
+code --remote-debugging-port=9222     # VS Code
+cursor --remote-debugging-port=9222   # Cursor
+```
+
+**2. Build and install:**
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+```
+
+Then press `F5` to run in dev mode, or package it:
+
+```bash
+npx vsce package
+code --install-extension llm-auto-confirm-0.1.0.vsix
+```
+
+**3. Start:**
+
+- Command Palette → **"LLM Auto Confirm: Start"**
+- Or click the status bar item to toggle
+
+### Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| `llmAutoConfirm.enabled` | `false` | Auto-start on launch |
+| `llmAutoConfirm.pollingInterval` | `2000` | DOM polling interval (ms) |
+| `llmAutoConfirm.debugPort` | `9222` | CDP remote debugging port |
+| `llmAutoConfirm.buttonSelectors` | *(built-in)* | CSS selectors for approval buttons |
+| `llmAutoConfirm.buttonTextPatterns` | `["Allow", "Accept", ...]` | Button text to match |
+| `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Commands to never auto-approve |
+
+### Safety
+
+- **Dangerous command blocking:** Commands matching danger patterns are never auto-approved.
+- **Status bar indicator:** Shows state (Off / On / Error) and click count.
+- **Output log:** All actions logged to the "LLM Auto-Confirm" output channel.
+
+See [vscode-extension/README.md](vscode-extension/README.md) for full details.
+
+---
 
 ## License
 
