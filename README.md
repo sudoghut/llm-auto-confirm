@@ -1,17 +1,17 @@
 # LLM Auto-Confirm
 
-Automatically clicks confirmation/approval buttons for LLM coding assistants (Claude, GitHub Copilot, Cursor, Cody, etc.). Stay hands-free while your AI assistant works.
+Automatically confirms permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex, etc.). Stay hands-free while your AI assistant works.
 
 Two approaches included:
 
 | | Python Script | VS Code Extension |
 |---|---|---|
-| **Technique** | Screenshot + OpenCV template matching | Chrome DevTools Protocol (CDP) |
+| **Technique** | Screenshot + OpenCV template matching | Terminal Shell Integration API |
 | **Mouse movement** | Briefly moves & restores | None |
 | **Works minimized** | No | Yes |
-| **CPU usage** | Higher (screen capture) | Lower (DOM query) |
-| **Setup** | Just run | Needs `--remote-debugging-port` |
-| **Scope** | Any app on screen | IDE only (VS Code, Cursor) |
+| **CPU usage** | Higher (screen capture) | Minimal (event-driven) |
+| **Setup** | Just run | Just install (no special flags) |
+| **Scope** | Any app on screen | Terminal-based LLM tools in VS Code |
 
 ---
 
@@ -85,20 +85,19 @@ python auto_confirm.py --capture cursor_yes
 
 ---
 
-## Option 2: VS Code Extension (CDP-based)
+## Option 2: VS Code Extension (Terminal-based)
 
-Connects to the IDE's renderer process via Chrome DevTools Protocol. Polls the DOM for confirmation buttons and clicks them programmatically — no mouse movement, works even when minimized.
+Monitors terminal output using VS Code's Terminal Shell Integration API. Auto-detects when you run an LLM tool (e.g., `claude`, `aider`) and confirms permission prompts automatically. No special flags, no mouse/keyboard interference — install and forget.
 
 ### Setup
 
-**1. Launch IDE with remote debugging:**
+**Install from Marketplace:**
 
-```bash
-code --remote-debugging-port=9222     # VS Code
-cursor --remote-debugging-port=9222   # Cursor
-```
+Search for **"LLM Auto Confirm"** in the VS Code Extensions view.
 
-**2. Build and install:**
+The extension is enabled by default. Just install and use your LLM tool as usual.
+
+**Or build from source:**
 
 ```bash
 cd vscode-extension
@@ -110,30 +109,31 @@ Then press `F5` to run in dev mode, or package it:
 
 ```bash
 npx vsce package
-code --install-extension llm-auto-confirm-0.1.0.vsix
+code --install-extension llm-auto-confirm-0.2.0.vsix
 ```
 
-**3. Start:**
+### Requirements
 
-- Command Palette → **"LLM Auto Confirm: Start"**
-- Or click the status bar item to toggle
+- **VS Code 1.93+**
+- Shell integration enabled (on by default)
 
 ### Configuration
 
 | Setting | Default | Description |
 |---|---|---|
-| `llmAutoConfirm.enabled` | `false` | Auto-start on launch |
-| `llmAutoConfirm.pollingInterval` | `2000` | DOM polling interval (ms) |
-| `llmAutoConfirm.debugPort` | `9222` | CDP remote debugging port |
-| `llmAutoConfirm.buttonSelectors` | *(built-in)* | CSS selectors for approval buttons |
-| `llmAutoConfirm.buttonTextPatterns` | `["Allow", "Accept", ...]` | Button text to match |
+| `llmAutoConfirm.enabled` | `true` | Enable auto-confirmation on startup |
+| `llmAutoConfirm.commandPatterns` | `["claude", "aider", "goose", "codex"]` | Command patterns to monitor |
+| `llmAutoConfirm.confirmResponse` | `"y"` | Text to send to confirm prompts |
+| `llmAutoConfirm.cooldown` | `1000` | Cooldown (ms) after confirming |
+| `llmAutoConfirm.promptPatterns` | *(built-in)* | Regex patterns for permission prompts |
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Commands to never auto-approve |
 
 ### Safety
 
 - **Dangerous command blocking:** Commands matching danger patterns are never auto-approved.
-- **Status bar indicator:** Shows state (Off / On / Error) and click count.
+- **Status bar indicator:** Shows state (Off / On / Watching) and confirm count.
 - **Output log:** All actions logged to the "LLM Auto-Confirm" output channel.
+- **Terminal-scoped:** Only sends input to the specific terminal running the LLM tool.
 
 See [vscode-extension/README.md](vscode-extension/README.md) for full details.
 
