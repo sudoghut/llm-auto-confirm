@@ -16,6 +16,8 @@ export interface ClickEvent {
 
 /**
  * Polls the IDE DOM via CDP for confirmation buttons and clicks them.
+ * Also detects keyboard-based permission prompts (e.g. Claude Code)
+ * and responds by clicking the "Yes" option or sending keyboard events.
  * Scans ALL connected targets (main page + webview iframes).
  */
 export class AutoClicker {
@@ -23,6 +25,7 @@ export class AutoClicker {
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private _clickCount = 0;
   private _lastClickTime = 0;
+  private _lastPromptCount = 0;
   private _onClick: ((event: ClickEvent) => void) | null = null;
   private _onError: ((error: string) => void) | null = null;
   private _onTargetsChanged: ((count: number) => void) | null = null;
@@ -48,10 +51,12 @@ export class AutoClicker {
     this._onTargetsChanged = handler;
   }
 
-  /** Build the JavaScript that runs inside each target to find and click buttons. */
+  /**
+   * Build the JavaScript that runs inside each target.
+   * Handles both clickable buttons AND text-based permission prompts.
+   */
   private buildScanScript(): string {
     const selectors = JSON.stringify(this.config.buttonSelectors);
-    // Pre-escape patterns for regex word boundary matching
     const escapedPatterns = this.config.buttonTextPatterns.map((p) =>
       p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").toLowerCase()
     );
@@ -59,12 +64,14 @@ export class AutoClicker {
     const dangerousPatterns = JSON.stringify(
       this.config.dangerousCommandPatterns
     );
+    const lastPromptCount = this._lastPromptCount;
 
     return `
       (function() {
         var selectors = ${selectors};
         var textPatterns = ${textPatterns};
         var dangerousPatterns = ${dangerousPatterns}.map(function(p) { return new RegExp(p, 'i'); });
+        var LAST_PROMPT_COUNT = ${lastPromptCount};
 
         function isVisible(el) {
           if (!el) return false;
@@ -83,6 +90,10 @@ export class AutoClicker {
           return dangerousPatterns.some(function(p) { return p.test(text); });
         }
 
+        function textIsDangerous(text) {
+          return dangerousPatterns.some(function(p) { return p.test(text); });
+        }
+
         function matchesText(el) {
           var text = (el.textContent || el.title || el.ariaLabel || '').trim();
           if (!text) return false;
@@ -92,10 +103,10 @@ export class AutoClicker {
           });
         }
 
-        function scanDoc(doc) {
+        // --- Phase 1: Click standard buttons ---
+        function scanDocForButtons(doc) {
           if (!doc) return null;
 
-          // Try CSS selectors first
           for (var s = 0; s < selectors.length; s++) {
             try {
               var buttons = doc.querySelectorAll(selectors[s]);
@@ -108,7 +119,6 @@ export class AutoClicker {
             } catch(e) {}
           }
 
-          // Fallback: scan by text content (targeted selectors only)
           var candidates = doc.querySelectorAll('button, [role="button"], a.monaco-button');
           for (var c = 0; c < candidates.length; c++) {
             if (!isVisible(candidates[c])) continue;
@@ -121,34 +131,203 @@ export class AutoClicker {
           return null;
         }
 
-        // Scan the current document
-        var result = scanDoc(document);
-        if (result) return JSON.stringify(result);
+        // --- Phase 2: Detect and handle permission prompts ---
+        // Permission prompts contain "Allow ..." with numbered Yes/No options.
+        // They may render as <pre><code> blocks OR as structured UI components.
+        function isPermissionPrompt(text) {
+          return /^Allow\\s/.test(text) &&
+                 /\\d\\s+Yes\\b/i.test(text) &&
+                 /\\d\\s+No\\b/i.test(text);
+        }
 
-        // Scan all nested iframes (e.g. webview active-frame)
+        function findPermissionPrompts(doc) {
+          if (!doc) return [];
+
+          var prompts = [];
+          var all = doc.querySelectorAll('*');
+
+          for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            var text = (el.textContent || '').trim();
+
+            if (text.length > 500 || text.length < 30) continue;
+            if (!isPermissionPrompt(text)) continue;
+
+            // Only keep innermost matching elements
+            var hasMatchingChild = false;
+            for (var c = 0; c < el.children.length; c++) {
+              var ct = (el.children[c].textContent || '').trim();
+              if (ct.length >= 30 && isPermissionPrompt(ct)) {
+                hasMatchingChild = true;
+                break;
+              }
+            }
+            if (hasMatchingChild) continue;
+
+            if (!textIsDangerous(text)) {
+              prompts.push({ el: el, text: text });
+            }
+          }
+
+          return prompts;
+        }
+
+        function tryClickYesOption(promptEl) {
+          // Search within the prompt container for a "Yes" option to click
+          var descendants = promptEl.querySelectorAll('*');
+          for (var j = 0; j < descendants.length; j++) {
+            var child = descendants[j];
+            var childText = (child.textContent || '').trim();
+            // Match elements whose text is exactly "Yes" (the option label)
+            if (/^Yes$/i.test(childText) && child.children.length === 0) {
+              // Click the element itself, or its closest interactive parent
+              var target = child;
+              var p = child.parentElement;
+              while (p && p !== promptEl) {
+                var pText = (p.textContent || '').trim();
+                // Stop at the option row level (contains just "Yes" or "1  Yes")
+                if (/^(\\d\\s+)?Yes$/i.test(pText)) {
+                  target = p;
+                }
+                p = p.parentElement;
+              }
+              target.click();
+              return true;
+            }
+          }
+          return false;
+        }
+
+        function trySubmitViaInput(doc) {
+          // Fallback: type "1" in the input field and submit
+          var textarea = doc.querySelector('textarea');
+          if (textarea) {
+            textarea.focus();
+            try {
+              var setter = Object.getOwnPropertyDescriptor(
+                HTMLTextAreaElement.prototype, 'value'
+              ).set;
+              setter.call(textarea, '1');
+              textarea.dispatchEvent(new Event('input', { bubbles: true }));
+              var form = textarea.closest('form');
+              if (form) {
+                if (form.requestSubmit) {
+                  form.requestSubmit();
+                } else {
+                  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                }
+                return true;
+              }
+            } catch(e) {}
+          }
+
+          // Try contenteditable
+          var editable = doc.querySelector('[contenteditable="true"]');
+          if (editable) {
+            editable.focus();
+            editable.textContent = '1';
+            editable.dispatchEvent(new Event('input', { bubbles: true }));
+            var form = editable.closest('form');
+            if (form) {
+              if (form.requestSubmit) {
+                form.requestSubmit();
+              } else {
+                form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+              }
+              return true;
+            }
+          }
+
+          return false;
+        }
+
+        function handlePermissionPrompts(doc) {
+          var prompts = findPermissionPrompts(doc);
+          var promptCount = prompts.length;
+
+          if (promptCount <= LAST_PROMPT_COUNT) {
+            return { clicked: false, promptCount: promptCount };
+          }
+
+          // New prompt detected - try to handle the latest one
+          var latest = prompts[prompts.length - 1];
+          var promptText = latest.text.substring(0, 100);
+
+          // Strategy 1: Click the "Yes" option element directly
+          if (tryClickYesOption(latest.el)) {
+            return { clicked: true, promptCount: promptCount, text: promptText, selector: 'prompt-yes-click' };
+          }
+
+          // Strategy 2: Type "1" in the input field and submit
+          if (trySubmitViaInput(doc)) {
+            return { clicked: true, promptCount: promptCount, text: promptText, selector: 'prompt-input-submit' };
+          }
+
+          // Could not auto-confirm - return detection info for keyboard fallback
+          return { clicked: false, promptDetected: true, promptCount: promptCount, promptText: promptText };
+        }
+
+        // --- Main scan logic ---
+        function scanDocFull(doc) {
+          if (!doc) return null;
+
+          // Phase 1: Try standard button clicking
+          var buttonResult = scanDocForButtons(doc);
+          if (buttonResult) return buttonResult;
+
+          // Phase 2: Handle permission prompts
+          var promptResult = handlePermissionPrompts(doc);
+          if (promptResult && (promptResult.clicked || promptResult.promptDetected)) {
+            return promptResult;
+          }
+
+          // Return prompt count for tracking even if no action taken
+          if (promptResult && promptResult.promptCount !== undefined) {
+            return { clicked: false, promptCount: promptResult.promptCount };
+          }
+
+          return null;
+        }
+
+        // Scan the current document
+        var result = scanDocFull(document);
+        if (result && result.clicked) return JSON.stringify(result);
+
+        // Scan all nested iframes
         var iframes = document.querySelectorAll('iframe');
+        var bestResult = result;
         for (var i = 0; i < iframes.length; i++) {
           try {
             var iframeDoc = iframes[i].contentDocument || (iframes[i].contentWindow && iframes[i].contentWindow.document);
             if (iframeDoc) {
-              result = scanDoc(iframeDoc);
-              if (result) return JSON.stringify(result);
+              var iResult = scanDocFull(iframeDoc);
+              if (iResult && iResult.clicked) return JSON.stringify(iResult);
+              // Keep the result with highest prompt count
+              if (iResult && iResult.promptCount !== undefined) {
+                if (!bestResult || (iResult.promptCount || 0) > (bestResult.promptCount || 0)) {
+                  bestResult = iResult;
+                }
+              }
             }
-          } catch(e) {} // cross-origin iframes will throw
+          } catch(e) {}
         }
 
-        return JSON.stringify({ clicked: false });
+        return JSON.stringify(bestResult || { clicked: false, promptCount: 0 });
       })();
     `;
   }
 
-  /** Start polling for buttons using setTimeout to prevent concurrent evaluations. */
+  /** Send keyboard event to select option "1" (Yes) via CDP. */
+  private async confirmPromptViaKeyboard(): Promise<void> {
+    await this.cdp.dispatchKeyEvent("keyDown", "1", "Digit1", 49);
+    await this.cdp.dispatchKeyEvent("keyUp", "1", "Digit1", 49);
+  }
+
+  /** Start polling. */
   start(): void {
     if (this.timer) {
       return;
     }
-
-    const script = this.buildScanScript();
 
     const poll = async () => {
       try {
@@ -158,41 +337,65 @@ export class AutoClicker {
           return;
         }
 
-        // Skip if within cooldown period after last click
         const now = Date.now();
         if (now - this._lastClickTime < this.config.clickCooldown) {
           return;
         }
 
+        // Build script fresh each cycle (embeds current _lastPromptCount)
+        const script = this.buildScanScript();
         const raw = await this.cdp.evaluateInAll(script);
-        if (!raw) {
-          return;
-        }
+        if (!raw) return;
 
         const result = JSON.parse(raw);
+
         if (result.clicked) {
+          // Successfully clicked a button or confirmed a prompt
+          if (result.promptCount !== undefined) {
+            this._lastPromptCount = result.promptCount;
+          }
           this._clickCount++;
           this._lastClickTime = Date.now();
           this._onClick?.({
-            buttonText: result.text,
-            selector: result.selector,
+            buttonText: result.text || "Confirmed",
+            selector: result.selector || "unknown",
             timestamp: new Date(),
           });
+        } else if (result.promptDetected) {
+          // Prompt detected but click/input methods failed - try keyboard
+          try {
+            await this.confirmPromptViaKeyboard();
+            if (result.promptCount !== undefined) {
+              this._lastPromptCount = result.promptCount;
+            }
+            this._clickCount++;
+            this._lastClickTime = Date.now();
+            this._onClick?.({
+              buttonText: result.promptText || "Permission prompt",
+              selector: "keyboard-fallback",
+              timestamp: new Date(),
+            });
+          } catch {
+            // keyboard dispatch failed, will retry next cycle
+          }
+        } else if (result.promptCount !== undefined) {
+          // Update tracking even if no action taken
+          if (result.promptCount < this._lastPromptCount) {
+            // Prompts were removed (page refresh, new session)
+            this._lastPromptCount = result.promptCount;
+          }
         }
       } catch {
-        // Transient errors (JSON parse, CDP timeout) - ignore and retry next cycle
+        // Transient errors - ignore and retry next cycle
       } finally {
-        // Schedule next poll only after current one completes (prevents concurrent evaluations)
         if (this.timer !== null) {
           this.timer = setTimeout(poll, this.config.pollingInterval);
         }
       }
     };
 
-    // Mark as running and start first poll
     this.timer = setTimeout(poll, 0);
 
-    // Periodically refresh CDP connections to pick up new webviews
     this.refreshTimer = setInterval(async () => {
       try {
         const prevCount = this.cdp.connectedCount;
@@ -204,7 +407,7 @@ export class AutoClicker {
       } catch {
         // ignore refresh errors
       }
-    }, 10000); // every 10 seconds
+    }, 10000);
   }
 
   /** Stop polling. */
