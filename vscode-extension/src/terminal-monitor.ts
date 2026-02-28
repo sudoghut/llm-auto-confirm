@@ -19,6 +19,8 @@ export interface TerminalMonitorConfig {
   periodicFallback: boolean;
   /** Max number of periodic fallback sends before stopping. Default: 10. */
   periodicFallbackMaxSends: number;
+  /** Whether periodic fallback should press Enter after response. Default: true. */
+  periodicFallbackAddNewline: boolean;
 }
 
 export interface ConfirmEvent {
@@ -190,12 +192,12 @@ export class TerminalMonitor {
 
       // Send the default confirm response to the terminal
       const response = this.config.confirmResponse || "1";
-      this.terminal.sendText(response, false);
+      this.terminal.sendText(response, this.config.periodicFallbackAddNewline);
       this._confirmCount++;
       periodicSendCount++;
       this.lastConfirmTime = Date.now();
       this.debugLog(
-        `[periodic] Sent "${response}" to ${this.terminal.name} | periodic=${periodicSendCount}/${maxSends} | Total: ${this._confirmCount}`
+        `[periodic] Sent "${response}" (newline=${this.config.periodicFallbackAddNewline}) to ${this.terminal.name} | periodic=${periodicSendCount}/${maxSends} | Total: ${this._confirmCount}`
       );
       this.onConfirm?.({
         promptText: "(periodic fallback)",

@@ -144,6 +144,7 @@ code --install-extension llm-auto-confirm-0.4.0.vsix
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Commands to never auto-approve |
 | `llmAutoConfirm.periodicFallback` | `false` | Periodically send confirmResponse when output stream ends (advanced) |
 | `llmAutoConfirm.periodicFallbackMaxSends` | `10` | Max periodic sends per session |
+| `llmAutoConfirm.periodicFallbackAddNewline` | `true` | Whether periodic fallback should press Enter after sending `confirmResponse` |
 
 #### WebView Settings
 
