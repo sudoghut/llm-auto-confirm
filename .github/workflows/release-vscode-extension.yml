@@ -50,8 +50,3 @@ jobs:
           files: vscode-extension/llm-auto-confirm-${{ github.ref_name }}.vsix
           generate_release_notes: true
 
-      - name: Publish to VS Code Marketplace (optional)
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        if: ${{ env.VSCE_PAT != '' }}
-        run: npx @vscode/vsce publish --packagePath llm-auto-confirm-${{ github.ref_name }}.vsix --pat "$VSCE_PAT"
