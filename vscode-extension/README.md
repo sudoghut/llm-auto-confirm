@@ -37,7 +37,7 @@ Calls known VS Code commands exposed by LLM extensions. This mode has significan
 | Tool | Best Approach |
 |------|--------------|
 | Claude Code | Use **terminal mode** (`claude` CLI). WebView `acceptProposedDiff` only handles editor diffs. |
-| Codex | Use **terminal mode** (`codex` CLI) or Codex's own `--full-auto` flag. WebView has no commands. |
+| Codex | Use **terminal mode** (`codex` CLI) or Codex's own `--full-auto` flag. WebView has no commands. Codex terminal sessions are auto-tuned with periodic fallback (no manual setting changes needed). |
 | Kilo Code | **WebView mode** works via `toggleAutoApprove`. |
 | Cline / Roo Code | **WebView mode** may work (unverified). |
 | Aider / Goose | Use **terminal mode**. These are terminal-only tools. |
@@ -115,6 +115,7 @@ Use the status bar item or Command Palette to toggle auto-confirm on/off.
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Patterns for commands to never auto-approve |
 | `llmAutoConfirm.periodicFallback` | `false` | When the output stream ends, periodically send confirmResponse without prompt detection. **Advanced, use with caution.** |
 | `llmAutoConfirm.periodicFallbackMaxSends` | `10` | Max periodic fallback sends per terminal session (1–100) |
+| `llmAutoConfirm.periodicFallbackAddNewline` | `true` | Whether periodic fallback should press Enter after sending `confirmResponse` |
 | `llmAutoConfirm.debug` | `false` | Enable verbose debug logging (raw terminal output, match details, tick logs) |
 
 ### WebView Settings

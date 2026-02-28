@@ -34,6 +34,28 @@ interface ExtensionConfig {
   webviewConfig: WebviewMonitorConfig;
 }
 
+function getMonitorConfigForCommand(
+  commandLine: string,
+  baseConfig: TerminalMonitorConfig
+): TerminalMonitorConfig {
+  const tuned = { ...baseConfig };
+  const isCodex = isLLMCommand(commandLine, ["codex"]);
+
+  // Codex terminal sessions can stop yielding readable output while still
+  // waiting for approval. Auto-enable a safer periodic fallback profile so
+  // users don't need manual settings tweaks.
+  if (isCodex) {
+    tuned.periodicFallback = true;
+    tuned.periodicFallbackAddNewline = true;
+    tuned.periodicFallbackMaxSends = Math.max(
+      tuned.periodicFallbackMaxSends,
+      30
+    );
+  }
+
+  return tuned;
+}
+
 function getConfig(): ExtensionConfig {
   const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
 
@@ -59,6 +81,10 @@ function getConfig(): ExtensionConfig {
       ),
       periodicFallback: cfg.get<boolean>("periodicFallback", false),
       periodicFallbackMaxSends: cfg.get<number>("periodicFallbackMaxSends", 10),
+      periodicFallbackAddNewline: cfg.get<boolean>(
+        "periodicFallbackAddNewline",
+        true
+      ),
     },
     webviewAutoConfirm: cfg.get<boolean>("webviewAutoConfirm", false),
     webviewConfig: {
@@ -273,7 +299,7 @@ export function activate(context: vscode.ExtensionContext) {
       const monitor = new TerminalMonitor(
         e.terminal,
         e.execution,
-        config.monitorConfig,
+        getMonitorConfigForCommand(commandLine, config.monitorConfig),
         log,
         debug
       );

@@ -168,6 +168,11 @@
           "maximum": 100,
           "description": "Maximum number of periodic fallback sends before stopping (per terminal session)"
         },
+        "llmAutoConfirm.periodicFallbackAddNewline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether periodic fallback should press Enter after sending confirmResponse"
+        },
         "llmAutoConfirm.webviewAutoConfirm": {
           "type": "boolean",
           "default": false,
