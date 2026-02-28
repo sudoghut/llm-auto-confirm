@@ -436,7 +436,10 @@ def monitor(confidence, interval, cooldown):
                 if sys.platform == "darwin":
                     cx, cy = cx // 2, cy // 2
 
+                # Save mouse position, click, then restore
+                orig_x, orig_y = pyautogui.position()
                 pyautogui.click(cx, cy)
+                pyautogui.moveTo(orig_x, orig_y)
                 click_count += 1
                 last_click_time = time.time()
                 ts = datetime.now().strftime("%H:%M:%S")
