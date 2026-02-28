@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -50,5 +51,7 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to VS Code Marketplace (optional)
-        if: ${{ secrets.VSCE_PAT != '' }}
-        run: npx @vscode/vsce publish --packagePath llm-auto-confirm-${{ github.ref_name }}.vsix --pat "${{ secrets.VSCE_PAT }}"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        if: ${{ env.VSCE_PAT != '' }}
+        run: npx @vscode/vsce publish --packagePath llm-auto-confirm-${{ github.ref_name }}.vsix --pat "$VSCE_PAT"
