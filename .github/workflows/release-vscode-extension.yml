@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -49,6 +50,3 @@ jobs:
           files: vscode-extension/llm-auto-confirm-${{ github.ref_name }}.vsix
           generate_release_notes: true
 
-      - name: Publish to VS Code Marketplace (optional)
-        if: ${{ secrets.VSCE_PAT != '' }}
-        run: npx @vscode/vsce publish --packagePath llm-auto-confirm-${{ github.ref_name }}.vsix --pat "${{ secrets.VSCE_PAT }}"
