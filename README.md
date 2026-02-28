@@ -109,7 +109,7 @@ Then press `F5` to run in dev mode, or package it:
 
 ```bash
 npx vsce package
-code --install-extension llm-auto-confirm-0.4.0.vsix
+code --install-extension llm-auto-confirm-0.4.1.vsix
 ```
 
 ### Requirements
