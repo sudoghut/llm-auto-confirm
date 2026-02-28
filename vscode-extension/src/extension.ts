@@ -1,26 +1,33 @@
 import * as vscode from "vscode";
-import { CDPClient } from "./cdp-client";
-import { AutoClicker, AutoClickerConfig } from "./auto-clicker";
+import { TerminalMonitor, TerminalMonitorConfig } from "./terminal-monitor";
 
-let cdpClient: CDPClient | null = null;
-let autoClicker: AutoClicker | null = null;
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
+let isEnabled = false;
+let totalConfirms = 0;
 
-function getConfig(): {
-  debugPort: number;
-  autoClickerConfig: AutoClickerConfig;
+const monitors = new Map<vscode.Terminal, TerminalMonitor>();
+
+interface ExtensionConfig {
   enabled: boolean;
-} {
+  commandPatterns: string[];
+  monitorConfig: TerminalMonitorConfig;
+}
+
+function getConfig(): ExtensionConfig {
   const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
   return {
-    debugPort: cfg.get<number>("debugPort", 9222),
-    enabled: cfg.get<boolean>("enabled", false),
-    autoClickerConfig: {
-      pollingInterval: cfg.get<number>("pollingInterval", 2000),
-      clickCooldown: cfg.get<number>("clickCooldown", 1000),
-      buttonSelectors: cfg.get<string[]>("buttonSelectors", []),
-      buttonTextPatterns: cfg.get<string[]>("buttonTextPatterns", []),
+    enabled: cfg.get<boolean>("enabled", true),
+    commandPatterns: cfg.get<string[]>("commandPatterns", [
+      "claude",
+      "aider",
+      "goose",
+      "codex",
+    ]),
+    monitorConfig: {
+      confirmResponse: cfg.get<string>("confirmResponse", "y"),
+      cooldown: cfg.get<number>("cooldown", 1000),
+      promptPatterns: cfg.get<string[]>("promptPatterns", []),
       dangerousCommandPatterns: cfg.get<string[]>(
         "dangerousCommandPatterns",
         []
@@ -29,35 +36,18 @@ function getConfig(): {
   };
 }
 
-function updateStatusBar(state: "off" | "connecting" | "active" | "error") {
-  switch (state) {
-    case "off":
-      statusBarItem.text = "$(circle-slash) Auto-Confirm: Off";
-      statusBarItem.backgroundColor = undefined;
-      statusBarItem.tooltip = "Click to start LLM Auto-Confirm";
-      break;
-    case "connecting":
-      statusBarItem.text = "$(sync~spin) Auto-Confirm: Connecting...";
-      statusBarItem.backgroundColor = undefined;
-      statusBarItem.tooltip = "Connecting to CDP...";
-      break;
-    case "active":
-      statusBarItem.text = `$(check) Auto-Confirm: On (${autoClicker?.clickCount ?? 0})`;
-      statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.warningBackground"
-      );
-      statusBarItem.tooltip = "Click to stop LLM Auto-Confirm";
-      break;
-    case "error":
-      statusBarItem.text = "$(error) Auto-Confirm: Error";
-      statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.errorBackground"
-      );
-      statusBarItem.tooltip =
-        "CDP connection failed. Is --remote-debugging-port enabled?";
-      break;
-  }
-  statusBarItem.show();
+function isLLMCommand(commandLine: string, patterns: string[]): boolean {
+  const trimmed = commandLine.trim().toLowerCase();
+  return patterns.some((pattern) => {
+    const p = pattern.toLowerCase();
+    // Match as standalone command, after path separator, or after npx/pipe/&&
+    const re = new RegExp(`(?:^|[/\\\\|&;\\s])${escapeRegex(p)}(?:\\s|$)`, "i");
+    return re.test(trimmed);
+  });
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function log(msg: string) {
@@ -65,154 +55,54 @@ function log(msg: string) {
   outputChannel.appendLine(`[${ts}] ${msg}`);
 }
 
-async function startAutoConfirm() {
-  if (autoClicker?.isRunning) {
-    vscode.window.showInformationMessage("LLM Auto-Confirm is already running.");
-    return;
-  }
-
-  const { debugPort, autoClickerConfig } = getConfig();
-  updateStatusBar("connecting");
-  log(`Connecting to CDP on port ${debugPort}...`);
-
-  cdpClient = new CDPClient(debugPort);
-  const connected = await cdpClient.connect();
-
-  if (!connected) {
-    updateStatusBar("error");
-    log("Failed to connect to CDP.");
-    const action = await vscode.window.showErrorMessage(
-      "Cannot connect to Chrome DevTools Protocol. Make sure your IDE was launched with --remote-debugging-port=9222",
-      "Show Setup Guide",
-      "Retry"
+function updateStatusBar() {
+  const activeCount = monitors.size;
+  if (!isEnabled) {
+    statusBarItem.text = "$(circle-slash) Auto-Confirm: Off";
+    statusBarItem.backgroundColor = undefined;
+    statusBarItem.tooltip = "Click to enable LLM Auto-Confirm";
+  } else if (activeCount > 0) {
+    statusBarItem.text = `$(eye) Auto-Confirm: Watching (${totalConfirms})`;
+    statusBarItem.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.warningBackground"
     );
-    if (action === "Show Setup Guide") {
-      showSetupGuide();
-    } else if (action === "Retry") {
-      await startAutoConfirm();
-    }
-    return;
-  }
-
-  log(`CDP connected to ${cdpClient.connectedCount} target(s) (main page + webview iframes).`);
-
-  autoClicker = new AutoClicker(cdpClient, autoClickerConfig);
-
-  autoClicker.onClick = (event) => {
-    log(
-      `Clicked: "${event.buttonText}" (selector: ${event.selector}) | Total: ${autoClicker!.clickCount}`
-    );
-    updateStatusBar("active");
-  };
-
-  autoClicker.onTargetsChanged = (count) => {
-    log(`CDP targets updated: now connected to ${count} target(s).`);
-  };
-
-  autoClicker.onError = (error) => {
-    log(`Error: ${error}`);
-    // AutoClicker already stopped itself - clean up remaining resources
-    if (cdpClient) {
-      cdpClient.disconnect();
-      cdpClient = null;
-    }
-    autoClicker = null;
-    updateStatusBar("error");
-  };
-
-  autoClicker.start();
-  updateStatusBar("active");
-  log(
-    `Auto-clicker started (interval: ${autoClickerConfig.pollingInterval}ms)`
-  );
-  vscode.window.showInformationMessage("LLM Auto-Confirm started.");
-}
-
-function stopAutoConfirm() {
-  if (autoClicker) {
-    const count = autoClicker.clickCount;
-    autoClicker.stop();
-    autoClicker = null;
-    log(`Auto-clicker stopped. Total clicks: ${count}`);
-  }
-  if (cdpClient) {
-    cdpClient.disconnect();
-    cdpClient = null;
-  }
-  updateStatusBar("off");
-  vscode.window.showInformationMessage("LLM Auto-Confirm stopped.");
-}
-
-function toggleAutoConfirm() {
-  if (autoClicker?.isRunning) {
-    stopAutoConfirm();
+    statusBarItem.tooltip = `Monitoring ${activeCount} terminal(s). Total confirms: ${totalConfirms}. Click to disable.`;
   } else {
-    startAutoConfirm();
+    statusBarItem.text = `$(check) Auto-Confirm: On (${totalConfirms})`;
+    statusBarItem.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.warningBackground"
+    );
+    statusBarItem.tooltip =
+      "Waiting for LLM commands in terminals. Click to disable.";
   }
+  statusBarItem.show();
 }
 
-function showSetupGuide() {
-  const panel = vscode.window.createWebviewPanel(
-    "llmAutoConfirmSetup",
-    "LLM Auto-Confirm Setup",
-    vscode.ViewColumn.One,
-    {}
-  );
+function startMonitoring() {
+  isEnabled = true;
+  updateStatusBar();
+  log("Auto-confirm enabled. Listening for LLM commands in terminals...");
+  vscode.window.showInformationMessage("LLM Auto-Confirm enabled.");
+}
 
-  panel.webview.html = `<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: var(--vscode-font-family, sans-serif); padding: 20px; color: var(--vscode-foreground); }
-    code { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 2px 6px; border-radius: 3px; }
-    pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 12px; border-radius: 6px; overflow-x: auto; }
-    h2 { border-bottom: 1px solid var(--vscode-panel-border, #444); padding-bottom: 8px; }
-  </style>
-</head>
-<body>
-  <h1>LLM Auto-Confirm Setup Guide</h1>
+function stopMonitoring() {
+  isEnabled = false;
+  for (const [terminal, monitor] of monitors) {
+    monitor.stop();
+    log(`Stopped monitoring terminal: ${terminal.name}`);
+  }
+  monitors.clear();
+  updateStatusBar();
+  log("Auto-confirm disabled.");
+  vscode.window.showInformationMessage("LLM Auto-Confirm disabled.");
+}
 
-  <h2>Step 1: Enable Remote Debugging Port</h2>
-  <p>You need to launch your IDE with the <code>--remote-debugging-port</code> flag.</p>
-
-  <h3>VS Code (Windows)</h3>
-  <pre>code --remote-debugging-port=9222</pre>
-  <p>Or add to your shortcut target:<br>
-  <code>"C:\\...\\Code.exe" --remote-debugging-port=9222</code></p>
-
-  <h3>VS Code (macOS)</h3>
-  <pre>/Applications/Visual\\ Studio\\ Code.app/Contents/MacOS/Electron --remote-debugging-port=9222</pre>
-  <p>Or create an alias in your shell profile:<br>
-  <code>alias code-debug="code --remote-debugging-port=9222"</code></p>
-
-  <h3>Cursor</h3>
-  <pre>cursor --remote-debugging-port=9222</pre>
-
-  <h2>Step 2: Start Auto-Confirm</h2>
-  <ol>
-    <li>Open Command Palette (<code>Ctrl+Shift+P</code> / <code>Cmd+Shift+P</code>)</li>
-    <li>Run <code>LLM Auto Confirm: Start</code></li>
-    <li>The status bar will show <strong>Auto-Confirm: On</strong> when active</li>
-  </ol>
-
-  <h2>Step 3: Customize (Optional)</h2>
-  <p>Open Settings and search for <code>llmAutoConfirm</code> to configure:</p>
-  <ul>
-    <li><strong>Polling interval</strong> - how often to check for buttons (default: 2000ms)</li>
-    <li><strong>Button selectors</strong> - CSS selectors for approval buttons</li>
-    <li><strong>Text patterns</strong> - button text to match (e.g., "Allow", "Accept")</li>
-    <li><strong>Dangerous patterns</strong> - commands that should never be auto-approved</li>
-  </ul>
-
-  <h2>Persistent Setup (Windows)</h2>
-  <p>To always launch with the debugging port, edit the shortcut properties:</p>
-  <pre>Target: "C:\\Users\\...\\Code.exe" --remote-debugging-port=9222</pre>
-
-  <h2>Persistent Setup (macOS / Linux)</h2>
-  <p>Add to your <code>~/.bashrc</code> or <code>~/.zshrc</code>:</p>
-  <pre>alias code="code --remote-debugging-port=9222"</pre>
-</body>
-</html>`;
+function toggleMonitoring() {
+  if (isEnabled) {
+    stopMonitoring();
+  } else {
+    startMonitoring();
+  }
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -223,40 +113,133 @@ export function activate(context: vscode.ExtensionContext) {
     100
   );
   statusBarItem.command = "llm-auto-confirm.toggle";
-  updateStatusBar("off");
+  updateStatusBar();
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("llm-auto-confirm.start", startAutoConfirm),
-    vscode.commands.registerCommand("llm-auto-confirm.stop", stopAutoConfirm),
+    vscode.commands.registerCommand("llm-auto-confirm.start", startMonitoring),
+    vscode.commands.registerCommand("llm-auto-confirm.stop", stopMonitoring),
     vscode.commands.registerCommand(
       "llm-auto-confirm.toggle",
-      toggleAutoConfirm
+      toggleMonitoring
     ),
     statusBarItem,
-    outputChannel,
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("llmAutoConfirm") && autoClicker?.isRunning) {
-        const { autoClickerConfig } = getConfig();
-        autoClicker.updateConfig(autoClickerConfig);
-        log("Configuration updated.");
+    outputChannel
+  );
+
+  // Core: auto-detect LLM commands in any terminal
+  context.subscriptions.push(
+    vscode.window.onDidStartTerminalShellExecution(async (e) => {
+      if (!isEnabled) return;
+
+      const config = getConfig();
+      const commandLine = e.execution.commandLine.value;
+
+      if (!isLLMCommand(commandLine, config.commandPatterns)) return;
+
+      log(
+        `Detected LLM command: "${commandLine}" in terminal: ${e.terminal.name}`
+      );
+
+      // Stop any existing monitor on this terminal
+      if (monitors.has(e.terminal)) {
+        monitors.get(e.terminal)!.stop();
       }
+
+      const monitor = new TerminalMonitor(
+        e.terminal,
+        e.execution,
+        config.monitorConfig,
+        log
+      );
+
+      monitor.onConfirm = () => {
+        totalConfirms++;
+        updateStatusBar();
+      };
+
+      monitor.onDangerousBlocked = (promptText) => {
+        vscode.window.showWarningMessage(
+          `LLM Auto-Confirm blocked a dangerous command: ${promptText}`
+        );
+      };
+
+      monitor.onError = (error) => {
+        log(`Monitor error: ${error}`);
+      };
+
+      monitors.set(e.terminal, monitor);
+      updateStatusBar();
+
+      // Start monitoring (runs the async read loop)
+      monitor.start();
+    })
+  );
+
+  // Cleanup when command execution ends
+  context.subscriptions.push(
+    vscode.window.onDidEndTerminalShellExecution((e) => {
+      const monitor = monitors.get(e.terminal);
+      if (monitor) {
+        monitor.stop();
+        monitors.delete(e.terminal);
+        log(`Command ended in terminal: ${e.terminal.name}`);
+        updateStatusBar();
+      }
+    })
+  );
+
+  // Cleanup when terminal is closed
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((terminal) => {
+      const monitor = monitors.get(terminal);
+      if (monitor) {
+        monitor.stop();
+        monitors.delete(terminal);
+        log(`Terminal closed: ${terminal.name}`);
+        updateStatusBar();
+      }
+    })
+  );
+
+  // React to config changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("llmAutoConfirm")) return;
+      const config = getConfig();
+
+      if (config.enabled !== isEnabled) {
+        if (config.enabled) {
+          startMonitoring();
+        } else {
+          stopMonitoring();
+        }
+      }
+
+      // Update all active monitors with new config
+      for (const monitor of monitors.values()) {
+        monitor.updateConfig(config.monitorConfig);
+      }
+
+      log("Configuration updated.");
     })
   );
 
   // Auto-start if configured
   const { enabled } = getConfig();
   if (enabled) {
-    startAutoConfirm();
+    isEnabled = true;
+    updateStatusBar();
+    log(
+      "Extension activated. Auto-confirm enabled, listening for LLM commands..."
+    );
+  } else {
+    log("Extension activated. Auto-confirm disabled.");
   }
-
-  log("Extension activated.");
 }
 
 export function deactivate() {
-  if (autoClicker) {
-    autoClicker.stop();
+  for (const monitor of monitors.values()) {
+    monitor.stop();
   }
-  if (cdpClient) {
-    cdpClient.disconnect();
-  }
+  monitors.clear();
 }
