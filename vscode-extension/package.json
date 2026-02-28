@@ -1,8 +1,8 @@
 {
   "name": "llm-auto-confirm",
   "displayName": "LLM Auto Confirm",
-  "description": "Auto-click confirmation/approval buttons for LLM coding assistants (Claude, Copilot, Cursor, etc.) via Chrome DevTools Protocol",
-  "version": "0.1.0",
+  "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, etc.) running in the VS Code terminal",
+  "version": "0.2.0",
   "publisher": "sudoghut",
   "license": "MIT",
   "repository": {
@@ -10,7 +10,7 @@
     "url": "https://github.com/sudoghut/llm-auto-confirm"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
@@ -39,62 +39,45 @@
       "properties": {
         "llmAutoConfirm.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable auto-confirmation on startup"
         },
-        "llmAutoConfirm.pollingInterval": {
-          "type": "number",
-          "default": 2000,
-          "minimum": 500,
-          "maximum": 30000,
-          "description": "DOM polling interval in milliseconds"
+        "llmAutoConfirm.commandPatterns": {
+          "type": "array",
+          "default": [
+            "claude",
+            "aider",
+            "goose",
+            "codex"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Command name patterns to monitor in terminals (matched against the command line)"
         },
-        "llmAutoConfirm.debugPort": {
-          "type": "number",
-          "default": 9222,
-          "description": "Chrome DevTools Protocol remote debugging port"
+        "llmAutoConfirm.confirmResponse": {
+          "type": "string",
+          "default": "y",
+          "description": "Text to send to confirm a permission prompt (e.g., 'y' or '1')"
         },
-        "llmAutoConfirm.clickCooldown": {
+        "llmAutoConfirm.cooldown": {
           "type": "number",
           "default": 1000,
           "minimum": 0,
           "maximum": 10000,
-          "description": "Cooldown period in milliseconds after clicking a button before scanning again"
+          "description": "Cooldown in milliseconds after confirming before checking again"
         },
-        "llmAutoConfirm.buttonSelectors": {
+        "llmAutoConfirm.promptPatterns": {
           "type": "array",
           "default": [
-            "button[title*='Allow']",
-            "button[title*='Accept']",
-            "button[title*='Proceed']",
-            "button[title*='Yes']",
-            "button[title*='Continue']",
-            "div.cursor-button-primary",
-            "a.monaco-button[title*='Allow']",
-            "a.monaco-button[title*='Accept']",
-            "a.monaco-button[title*='Yes']",
-            "a.monaco-button[title*='Continue']"
+            "Allow.*(?:Yes|No)",
+            "Do you want to (?:proceed|continue|allow|run).*\\?",
+            "(?:Y\\/?n|y\\/N|\\(y\\)es|\\(n\\)o)"
           ],
           "items": {
             "type": "string"
           },
-          "description": "CSS selectors for confirmation buttons to auto-click"
-        },
-        "llmAutoConfirm.buttonTextPatterns": {
-          "type": "array",
-          "default": [
-            "Allow",
-            "Accept",
-            "Proceed",
-            "Yes",
-            "Continue",
-            "Run command",
-            "Approve"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "Button text patterns to match (case-insensitive)"
+          "description": "Regex patterns to identify permission prompts in terminal output"
         },
         "llmAutoConfirm.dangerousCommandPatterns": {
           "type": "array",
@@ -124,12 +107,8 @@
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
-    "@types/vscode": "^1.85.0",
-    "@types/ws": "^8.5.10",
+    "@types/vscode": "^1.93.0",
     "esbuild": "^0.27.3",
     "typescript": "^5.3.0"
-  },
-  "dependencies": {
-    "ws": "^8.16.0"
   }
 }
