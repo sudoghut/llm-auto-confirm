@@ -1,21 +1,45 @@
 import * as vscode from "vscode";
-import { TerminalMonitor, TerminalMonitorConfig } from "./terminal-monitor";
+import {
+  TerminalMonitor,
+  TerminalMonitorConfig,
+  PromptRule,
+} from "./terminal-monitor";
+import {
+  WebviewMonitor,
+  WebviewMonitorConfig,
+  ApprovalCommandEntry,
+} from "./webview-monitor";
 
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
 let isEnabled = false;
-let totalConfirms = 0;
+let isWebviewEnabled = false;
 
 const monitors = new Map<vscode.Terminal, TerminalMonitor>();
+// Track which execution each monitor is watching, so we don't stop
+// the monitor when an unrelated execution ends in the same terminal.
+const monitorExecutions = new Map<
+  vscode.Terminal,
+  vscode.TerminalShellExecution
+>();
+let webviewMonitor: WebviewMonitor | null = null;
+
+// --- Configuration ---
 
 interface ExtensionConfig {
   enabled: boolean;
   commandPatterns: string[];
   monitorConfig: TerminalMonitorConfig;
+  webviewAutoConfirm: boolean;
+  webviewConfig: WebviewMonitorConfig;
 }
 
 function getConfig(): ExtensionConfig {
   const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
+
+  const promptRules = cfg.get<PromptRule[]>("promptRules", []);
+  const cooldown = cfg.get<number>("cooldown", 1000);
+
   return {
     enabled: cfg.get<boolean>("enabled", true),
     commandPatterns: cfg.get<string[]>("commandPatterns", [
@@ -25,23 +49,39 @@ function getConfig(): ExtensionConfig {
       "codex",
     ]),
     monitorConfig: {
-      confirmResponse: cfg.get<string>("confirmResponse", "y"),
-      cooldown: cfg.get<number>("cooldown", 1000),
+      confirmResponse: cfg.get<string>("confirmResponse", "1"),
+      cooldown,
       promptPatterns: cfg.get<string[]>("promptPatterns", []),
+      promptRules,
       dangerousCommandPatterns: cfg.get<string[]>(
         "dangerousCommandPatterns",
         []
       ),
+      periodicFallback: cfg.get<boolean>("periodicFallback", false),
+      periodicFallbackMaxSends: cfg.get<number>("periodicFallbackMaxSends", 10),
+    },
+    webviewAutoConfirm: cfg.get<boolean>("webviewAutoConfirm", false),
+    webviewConfig: {
+      pollInterval: cfg.get<number>("webviewPollInterval", 3000),
+      approvalCommands: cfg.get<ApprovalCommandEntry[]>(
+        "webviewApprovalCommands",
+        []
+      ),
+      cooldown,
     },
   };
 }
+
+// --- Helpers ---
 
 function isLLMCommand(commandLine: string, patterns: string[]): boolean {
   const trimmed = commandLine.trim().toLowerCase();
   return patterns.some((pattern) => {
     const p = pattern.toLowerCase();
-    // Match as standalone command, after path separator, or after npx/pipe/&&
-    const re = new RegExp(`(?:^|[/\\\\|&;\\s])${escapeRegex(p)}(?:\\s|$)`, "i");
+    const re = new RegExp(
+      `(?:^|[/\\\\|&;\\s])${escapeRegex(p)}(?:\\s|$)`,
+      "i"
+    );
     return re.test(trimmed);
   });
 }
@@ -55,31 +95,53 @@ function log(msg: string) {
   outputChannel.appendLine(`[${ts}] ${msg}`);
 }
 
+function debug(msg: string) {
+  const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
+  if (!cfg.get<boolean>("debug", false)) return;
+  const ts = new Date().toLocaleTimeString();
+  outputChannel.appendLine(`[${ts}] [debug] ${msg}`);
+}
+
+// --- Status bar ---
+
 function updateStatusBar() {
-  const activeCount = monitors.size;
+  const terminalCount = monitors.size;
   if (!isEnabled) {
     statusBarItem.text = "$(circle-slash) Auto-Confirm: Off";
     statusBarItem.backgroundColor = undefined;
     statusBarItem.tooltip = "Click to enable LLM Auto-Confirm";
-  } else if (activeCount > 0) {
-    statusBarItem.text = `$(eye) Auto-Confirm: Watching (${totalConfirms})`;
-    statusBarItem.backgroundColor = new vscode.ThemeColor(
-      "statusBarItem.warningBackground"
-    );
-    statusBarItem.tooltip = `Monitoring ${activeCount} terminal(s). Total confirms: ${totalConfirms}. Click to disable.`;
   } else {
-    statusBarItem.text = `$(check) Auto-Confirm: On (${totalConfirms})`;
+    const mode = isWebviewEnabled ? "Terminal+WebView" : "Terminal";
+    if (terminalCount > 0) {
+      statusBarItem.text = `$(eye) Auto-Confirm: Watching [${mode}]`;
+    } else {
+      statusBarItem.text = `$(check) Auto-Confirm: On [${mode}]`;
+    }
     statusBarItem.backgroundColor = new vscode.ThemeColor(
       "statusBarItem.warningBackground"
     );
-    statusBarItem.tooltip =
-      "Waiting for LLM commands in terminals. Click to disable.";
+    statusBarItem.tooltip = [
+      `Mode: ${mode}`,
+      terminalCount > 0
+        ? `Monitoring ${terminalCount} terminal(s)`
+        : "Waiting for LLM commands",
+      "Click to disable",
+    ].join("\n");
   }
   statusBarItem.show();
 }
 
+// --- Start / Stop ---
+
 function startMonitoring() {
   isEnabled = true;
+  const config = getConfig();
+
+  // Start webview monitor if configured
+  if (config.webviewAutoConfirm) {
+    startWebviewMonitor(config);
+  }
+
   updateStatusBar();
   log("Auto-confirm enabled. Listening for LLM commands in terminals...");
   vscode.window.showInformationMessage("LLM Auto-Confirm enabled.");
@@ -92,6 +154,8 @@ function stopMonitoring() {
     log(`Stopped monitoring terminal: ${terminal.name}`);
   }
   monitors.clear();
+  monitorExecutions.clear();
+  stopWebviewMonitor();
   updateStatusBar();
   log("Auto-confirm disabled.");
   vscode.window.showInformationMessage("LLM Auto-Confirm disabled.");
@@ -104,6 +168,52 @@ function toggleMonitoring() {
     startMonitoring();
   }
 }
+
+// --- WebView monitor management ---
+
+function startWebviewMonitor(config?: ExtensionConfig) {
+  if (webviewMonitor) {
+    webviewMonitor.stop();
+  }
+  const cfg = config ?? getConfig();
+  isWebviewEnabled = true;
+  webviewMonitor = new WebviewMonitor(cfg.webviewConfig, log, debug);
+  webviewMonitor.onCommandExecuted = () => {
+    updateStatusBar();
+  };
+  webviewMonitor.start();
+  log("WebView command-based auto-confirm enabled.");
+}
+
+function stopWebviewMonitor() {
+  isWebviewEnabled = false;
+  if (webviewMonitor) {
+    webviewMonitor.stop();
+    webviewMonitor = null;
+  }
+}
+
+function toggleWebviewMonitor() {
+  if (isWebviewEnabled) {
+    stopWebviewMonitor();
+    log("WebView auto-confirm disabled.");
+    vscode.window.showInformationMessage(
+      "LLM Auto-Confirm: WebView mode disabled."
+    );
+  } else {
+    if (!isEnabled) {
+      // Also enable the main monitoring
+      isEnabled = true;
+    }
+    startWebviewMonitor();
+    vscode.window.showInformationMessage(
+      "LLM Auto-Confirm: WebView mode enabled (command-based)."
+    );
+  }
+  updateStatusBar();
+}
+
+// --- Extension activation ---
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel("LLM Auto-Confirm");
@@ -122,6 +232,10 @@ export function activate(context: vscode.ExtensionContext) {
       "llm-auto-confirm.toggle",
       toggleMonitoring
     ),
+    vscode.commands.registerCommand(
+      "llm-auto-confirm.toggleWebview",
+      toggleWebviewMonitor
+    ),
     statusBarItem,
     outputChannel
   );
@@ -133,6 +247,17 @@ export function activate(context: vscode.ExtensionContext) {
 
       const config = getConfig();
       const commandLine = e.execution.commandLine.value;
+
+      // If this terminal already has a monitor, attach the new execution
+      // so we can read prompt output that appears between commands
+      const existingMonitor = monitors.get(e.terminal);
+      if (existingMonitor) {
+        log(
+          `Sub-command in monitored terminal: "${commandLine.substring(0, 80)}" in ${e.terminal.name}`
+        );
+        existingMonitor.attachExecution(e.execution);
+        return;
+      }
 
       if (!isLLMCommand(commandLine, config.commandPatterns)) return;
 
@@ -149,11 +274,11 @@ export function activate(context: vscode.ExtensionContext) {
         e.terminal,
         e.execution,
         config.monitorConfig,
-        log
+        log,
+        debug
       );
 
       monitor.onConfirm = () => {
-        totalConfirms++;
         updateStatusBar();
       };
 
@@ -168,22 +293,30 @@ export function activate(context: vscode.ExtensionContext) {
       };
 
       monitors.set(e.terminal, monitor);
+      monitorExecutions.set(e.terminal, e.execution);
       updateStatusBar();
 
-      // Start monitoring (runs the async read loop)
       monitor.start();
     })
   );
 
-  // Cleanup when command execution ends
+  // Cleanup when the MONITORED execution ends (not unrelated sub-commands)
   context.subscriptions.push(
     vscode.window.onDidEndTerminalShellExecution((e) => {
-      const monitor = monitors.get(e.terminal);
-      if (monitor) {
-        monitor.stop();
-        monitors.delete(e.terminal);
-        log(`Command ended in terminal: ${e.terminal.name}`);
-        updateStatusBar();
+      const trackedExecution = monitorExecutions.get(e.terminal);
+      if (trackedExecution && trackedExecution === e.execution) {
+        const monitor = monitors.get(e.terminal);
+        if (monitor) {
+          monitor.stop();
+          monitors.delete(e.terminal);
+          monitorExecutions.delete(e.terminal);
+          log(`LLM command ended in terminal: ${e.terminal.name}`);
+          updateStatusBar();
+        }
+      } else {
+        log(
+          `Ignored sub-command end in terminal: ${e.terminal.name} (monitor still active)`
+        );
       }
     })
   );
@@ -195,6 +328,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (monitor) {
         monitor.stop();
         monitors.delete(terminal);
+        monitorExecutions.delete(terminal);
         log(`Terminal closed: ${terminal.name}`);
         updateStatusBar();
       }
@@ -215,22 +349,37 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      // Update all active monitors with new config
+      // Update terminal monitors
       for (const monitor of monitors.values()) {
         monitor.updateConfig(config.monitorConfig);
       }
 
+      // Update webview monitor
+      if (config.webviewAutoConfirm !== isWebviewEnabled) {
+        if (config.webviewAutoConfirm && isEnabled) {
+          startWebviewMonitor(config);
+        } else {
+          stopWebviewMonitor();
+        }
+      } else if (webviewMonitor) {
+        webviewMonitor.updateConfig(config.webviewConfig);
+      }
+
+      updateStatusBar();
       log("Configuration updated.");
     })
   );
 
   // Auto-start if configured
-  const { enabled } = getConfig();
-  if (enabled) {
+  const initialConfig = getConfig();
+  if (initialConfig.enabled) {
     isEnabled = true;
+    if (initialConfig.webviewAutoConfirm) {
+      startWebviewMonitor(initialConfig);
+    }
     updateStatusBar();
     log(
-      "Extension activated. Auto-confirm enabled, listening for LLM commands..."
+      `Extension activated. Auto-confirm enabled. WebView: ${initialConfig.webviewAutoConfirm ? "on" : "off"}.`
     );
   } else {
     log("Extension activated. Auto-confirm disabled.");
@@ -242,4 +391,9 @@ export function deactivate() {
     monitor.stop();
   }
   monitors.clear();
+  monitorExecutions.clear();
+  if (webviewMonitor) {
+    webviewMonitor.stop();
+    webviewMonitor = null;
+  }
 }

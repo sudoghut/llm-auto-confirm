@@ -6,12 +6,12 @@ Two approaches included:
 
 | | Python Script | VS Code Extension |
 |---|---|---|
-| **Technique** | Screenshot + OpenCV template matching | Terminal Shell Integration API |
+| **Technique** | Screenshot + OpenCV template matching | Terminal Shell Integration API + VS Code Command API |
 | **Mouse movement** | Briefly moves & restores | None |
 | **Works minimized** | No | Yes |
 | **CPU usage** | Higher (screen capture) | Minimal (event-driven) |
 | **Setup** | Just run | Just install (no special flags) |
-| **Scope** | Any app on screen | Terminal-based LLM tools in VS Code |
+| **Scope** | Any app on screen | Terminal + WebView LLM tools in VS Code |
 
 ---
 
@@ -85,9 +85,9 @@ python auto_confirm.py --capture cursor_yes
 
 ---
 
-## Option 2: VS Code Extension (Terminal-based)
+## Option 2: VS Code Extension (Terminal + WebView)
 
-Monitors terminal output using VS Code's Terminal Shell Integration API. Auto-detects when you run an LLM tool (e.g., `claude`, `aider`) and confirms permission prompts automatically. No special flags, no mouse/keyboard interference — install and forget.
+Monitors terminal output using VS Code's Terminal Shell Integration API. Auto-detects when you run an LLM tool (e.g., `claude`, `aider`) and confirms permission prompts automatically. Optionally supports WebView-based LLM extensions via the VS Code command API.
 
 ### Setup
 
@@ -95,7 +95,7 @@ Monitors terminal output using VS Code's Terminal Shell Integration API. Auto-de
 
 Search for **"LLM Auto Confirm"** in the VS Code Extensions view.
 
-The extension is enabled by default. Just install and use your LLM tool as usual.
+The extension is enabled by default (terminal mode). Just install and use your LLM tool as usual.
 
 **Or build from source:**
 
@@ -109,7 +109,7 @@ Then press `F5` to run in dev mode, or package it:
 
 ```bash
 npx vsce package
-code --install-extension llm-auto-confirm-0.2.0.vsix
+code --install-extension llm-auto-confirm-0.4.0.vsix
 ```
 
 ### Requirements
@@ -117,23 +117,56 @@ code --install-extension llm-auto-confirm-0.2.0.vsix
 - **VS Code 1.93+**
 - Shell integration enabled (on by default)
 
+### Supported Tools
+
+| Tool | Mode | Status |
+|------|------|--------|
+| **Claude Code** (`claude` CLI) | Terminal | Verified |
+| **Codex** (`codex` CLI) | Terminal | Should work |
+| **Aider** | Terminal | Should work |
+| **Goose** | Terminal | Should work |
+| **Kilo Code** | WebView | Verified (via `toggleAutoApprove`) |
+| **Cline / Roo Code** | WebView | Unverified |
+| **Codex** (WebView panel) | — | Not supported (no approval commands) |
+
 ### Configuration
+
+#### Terminal Settings
 
 | Setting | Default | Description |
 |---|---|---|
 | `llmAutoConfirm.enabled` | `true` | Enable auto-confirmation on startup |
 | `llmAutoConfirm.commandPatterns` | `["claude", "aider", "goose", "codex"]` | Command patterns to monitor |
-| `llmAutoConfirm.confirmResponse` | `"y"` | Text to send to confirm prompts |
+| `llmAutoConfirm.confirmResponse` | `"1"` | Fallback text to send when no prompt rule matches |
 | `llmAutoConfirm.cooldown` | `1000` | Cooldown (ms) after confirming |
-| `llmAutoConfirm.promptPatterns` | *(built-in)* | Regex patterns for permission prompts |
+| `llmAutoConfirm.promptRules` | *(built-in)* | Rules with per-pattern responses (checked first) |
+| `llmAutoConfirm.promptPatterns` | *(built-in)* | Fallback regex patterns for permission prompts |
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Commands to never auto-approve |
+| `llmAutoConfirm.periodicFallback` | `false` | Periodically send confirmResponse when output stream ends (advanced) |
+| `llmAutoConfirm.periodicFallbackMaxSends` | `10` | Max periodic sends per session |
+
+#### WebView Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `llmAutoConfirm.webviewAutoConfirm` | `false` | Enable command-based WebView auto-confirm (experimental) |
+| `llmAutoConfirm.webviewPollInterval` | `3000` | How often (ms) to attempt the approval command |
+| `llmAutoConfirm.webviewApprovalCommands` | `[]` | Additional VS Code command IDs to try |
+
+#### Other
+
+| Setting | Default | Description |
+|---|---|---|
+| `llmAutoConfirm.debug` | `false` | Enable verbose debug logging in the output channel |
 
 ### Safety
 
 - **Dangerous command blocking:** Commands matching danger patterns are never auto-approved.
-- **Status bar indicator:** Shows state (Off / On / Watching) and confirm count.
+- **Status bar indicator:** Shows state (Off / On / Watching) with mode label.
 - **Output log:** All actions logged to the "LLM Auto-Confirm" output channel.
 - **Terminal-scoped:** Only sends input to the specific terminal running the LLM tool.
+- **WebView safety:** Command allowlist prevents workspace config injection; per-extension tab label matching prevents cross-extension misfires.
+- **Periodic fallback off by default:** Blind send mode requires explicit opt-in.
 
 See [vscode-extension/README.md](vscode-extension/README.md) for full details.
 
