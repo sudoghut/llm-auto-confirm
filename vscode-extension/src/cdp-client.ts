@@ -76,7 +76,7 @@ class CDPConnection {
     });
   }
 
-  async evaluate(expression: string): Promise<any> {
+  async sendCommand(method: string, params: any = {}): Promise<any> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Not connected");
     }
@@ -84,13 +84,7 @@ class CDPConnection {
     const id = ++this.msgId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws!.send(
-        JSON.stringify({
-          id,
-          method: "Runtime.evaluate",
-          params: { expression, returnByValue: true, awaitPromise: true },
-        })
-      );
+      this.ws!.send(JSON.stringify({ id, method, params }));
 
       setTimeout(() => {
         if (this.pending.has(id)) {
@@ -98,6 +92,14 @@ class CDPConnection {
           reject(new Error("CDP request timed out"));
         }
       }, 5000);
+    });
+  }
+
+  async evaluate(expression: string): Promise<any> {
+    return this.sendCommand("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
     });
   }
 
@@ -227,6 +229,38 @@ export class CDPClient {
   /** Evaluate in a single target (for backward compat). */
   async evaluate(expression: string): Promise<any> {
     return this.evaluateInAll(expression);
+  }
+
+  /** Send a CDP command to the first connected target. */
+  async sendCommandToFirst(
+    method: string,
+    params: any = {}
+  ): Promise<any> {
+    for (const [, conn] of this.connections) {
+      if (!conn.isConnected) continue;
+      try {
+        return await conn.sendCommand(method, params);
+      } catch {
+        // try next target
+      }
+    }
+    return null;
+  }
+
+  /** Dispatch a keyboard event via CDP Input.dispatchKeyEvent. */
+  async dispatchKeyEvent(
+    type: "keyDown" | "keyUp" | "char",
+    key: string,
+    code: string,
+    keyCode: number
+  ): Promise<void> {
+    await this.sendCommandToFirst("Input.dispatchKeyEvent", {
+      type,
+      key,
+      code,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
   }
 
   /** Disconnect from all targets. */
