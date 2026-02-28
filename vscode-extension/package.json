@@ -4,6 +4,7 @@
   "description": "Auto-click confirmation/approval buttons for LLM coding assistants (Claude, Copilot, Cursor, etc.) via Chrome DevTools Protocol",
   "version": "0.1.0",
   "publisher": "sudoghut",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/sudoghut/llm-auto-confirm"
@@ -53,6 +54,13 @@
           "default": 9222,
           "description": "Chrome DevTools Protocol remote debugging port"
         },
+        "llmAutoConfirm.clickCooldown": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Cooldown period in milliseconds after clicking a button before scanning again"
+        },
         "llmAutoConfirm.buttonSelectors": {
           "type": "array",
           "default": [
@@ -61,7 +69,6 @@
             "button[title*='Proceed']",
             "button[title*='Yes']",
             "button[title*='Continue']",
-            "button[title*='Run']",
             "div.cursor-button-primary",
             "a.monaco-button[title*='Allow']",
             "a.monaco-button[title*='Accept']",

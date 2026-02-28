@@ -2,6 +2,7 @@ import { CDPClient } from "./cdp-client";
 
 export interface AutoClickerConfig {
   pollingInterval: number;
+  clickCooldown: number;
   buttonSelectors: string[];
   buttonTextPatterns: string[];
   dangerousCommandPatterns: string[];
@@ -18,9 +19,10 @@ export interface ClickEvent {
  * Scans ALL connected targets (main page + webview iframes).
  */
 export class AutoClicker {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private _clickCount = 0;
+  private _lastClickTime = 0;
   private _onClick: ((event: ClickEvent) => void) | null = null;
   private _onError: ((error: string) => void) | null = null;
   private _onTargetsChanged: ((count: number) => void) | null = null;
@@ -49,58 +51,71 @@ export class AutoClicker {
   /** Build the JavaScript that runs inside each target to find and click buttons. */
   private buildScanScript(): string {
     const selectors = JSON.stringify(this.config.buttonSelectors);
-    const textPatterns = JSON.stringify(
-      this.config.buttonTextPatterns.map((p) => p.toLowerCase())
+    // Pre-escape patterns for regex word boundary matching
+    const escapedPatterns = this.config.buttonTextPatterns.map((p) =>
+      p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").toLowerCase()
     );
+    const textPatterns = JSON.stringify(escapedPatterns);
     const dangerousPatterns = JSON.stringify(
       this.config.dangerousCommandPatterns
     );
 
     return `
       (function() {
-        const selectors = ${selectors};
-        const textPatterns = ${textPatterns};
-        const dangerousPatterns = ${dangerousPatterns}.map(p => new RegExp(p, 'i'));
+        var selectors = ${selectors};
+        var textPatterns = ${textPatterns};
+        var dangerousPatterns = ${dangerousPatterns}.map(function(p) { return new RegExp(p, 'i'); });
+
+        function isVisible(el) {
+          if (!el) return false;
+          var style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          var rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        }
 
         function containsDangerousCommand(el) {
-          let container = el;
-          for (let i = 0; i < 10 && container.parentElement; i++) {
+          var container = el;
+          for (var i = 0; i < 5 && container.parentElement; i++) {
             container = container.parentElement;
           }
-          const text = container.innerText || '';
-          return dangerousPatterns.some(p => p.test(text));
+          var text = container.innerText || '';
+          return dangerousPatterns.some(function(p) { return p.test(text); });
         }
 
         function matchesText(el) {
-          const text = (el.textContent || el.title || el.ariaLabel || '').trim().toLowerCase();
+          var text = (el.textContent || el.title || el.ariaLabel || '').trim();
           if (!text) return false;
-          return textPatterns.some(p => text.includes(p));
+          return textPatterns.some(function(p) {
+            var regex = new RegExp('\\\\b' + p + '\\\\b', 'i');
+            return regex.test(text);
+          });
         }
 
         function scanDoc(doc) {
           if (!doc) return null;
 
-          // Try CSS selectors
-          for (const sel of selectors) {
+          // Try CSS selectors first
+          for (var s = 0; s < selectors.length; s++) {
             try {
-              const buttons = doc.querySelectorAll(sel);
-              for (const btn of buttons) {
-                if (btn.offsetParent === null) continue;
-                if (containsDangerousCommand(btn)) continue;
-                btn.click();
-                return { clicked: true, text: (btn.textContent || '').trim().substring(0, 50), selector: sel };
+              var buttons = doc.querySelectorAll(selectors[s]);
+              for (var b = 0; b < buttons.length; b++) {
+                if (!isVisible(buttons[b])) continue;
+                if (containsDangerousCommand(buttons[b])) continue;
+                buttons[b].click();
+                return { clicked: true, text: (buttons[b].textContent || '').trim().substring(0, 50), selector: selectors[s] };
               }
             } catch(e) {}
           }
 
-          // Fallback: scan by text content
-          const candidates = doc.querySelectorAll('button, a, div[role="button"], span[role="button"], [class*="button"], [class*="btn"]');
-          for (const el of candidates) {
-            if (el.offsetParent === null) continue;
-            if (!matchesText(el)) continue;
-            if (containsDangerousCommand(el)) continue;
-            el.click();
-            return { clicked: true, text: (el.textContent || '').trim().substring(0, 50), selector: 'text-match' };
+          // Fallback: scan by text content (targeted selectors only)
+          var candidates = doc.querySelectorAll('button, [role="button"], a.monaco-button');
+          for (var c = 0; c < candidates.length; c++) {
+            if (!isVisible(candidates[c])) continue;
+            if (!matchesText(candidates[c])) continue;
+            if (containsDangerousCommand(candidates[c])) continue;
+            candidates[c].click();
+            return { clicked: true, text: (candidates[c].textContent || '').trim().substring(0, 50), selector: 'text-match' };
           }
 
           return null;
@@ -127,7 +142,7 @@ export class AutoClicker {
     `;
   }
 
-  /** Start polling for buttons. */
+  /** Start polling for buttons using setTimeout to prevent concurrent evaluations. */
   start(): void {
     if (this.timer) {
       return;
@@ -135,12 +150,17 @@ export class AutoClicker {
 
     const script = this.buildScanScript();
 
-    // Main polling loop: scan all targets for buttons
-    this.timer = setInterval(async () => {
+    const poll = async () => {
       try {
         if (!this.cdp.isConnected) {
-          this._onError?.("CDP connection lost");
           this.stop();
+          this._onError?.("CDP connection lost");
+          return;
+        }
+
+        // Skip if within cooldown period after last click
+        const now = Date.now();
+        if (now - this._lastClickTime < this.config.clickCooldown) {
           return;
         }
 
@@ -152,16 +172,25 @@ export class AutoClicker {
         const result = JSON.parse(raw);
         if (result.clicked) {
           this._clickCount++;
+          this._lastClickTime = Date.now();
           this._onClick?.({
             buttonText: result.text,
             selector: result.selector,
             timestamp: new Date(),
           });
         }
-      } catch (e: any) {
-        // Don't spam errors on every poll
+      } catch {
+        // Transient errors (JSON parse, CDP timeout) - ignore and retry next cycle
+      } finally {
+        // Schedule next poll only after current one completes (prevents concurrent evaluations)
+        if (this.timer !== null) {
+          this.timer = setTimeout(poll, this.config.pollingInterval);
+        }
       }
-    }, this.config.pollingInterval);
+    };
+
+    // Mark as running and start first poll
+    this.timer = setTimeout(poll, 0);
 
     // Periodically refresh CDP connections to pick up new webviews
     this.refreshTimer = setInterval(async () => {
@@ -181,7 +210,7 @@ export class AutoClicker {
   /** Stop polling. */
   stop(): void {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     if (this.refreshTimer) {

@@ -18,6 +18,7 @@ function getConfig(): {
     enabled: cfg.get<boolean>("enabled", false),
     autoClickerConfig: {
       pollingInterval: cfg.get<number>("pollingInterval", 2000),
+      clickCooldown: cfg.get<number>("clickCooldown", 1000),
       buttonSelectors: cfg.get<string[]>("buttonSelectors", []),
       buttonTextPatterns: cfg.get<string[]>("buttonTextPatterns", []),
       dangerousCommandPatterns: cfg.get<string[]>(
@@ -109,10 +110,14 @@ async function startAutoConfirm() {
   };
 
   autoClicker.onError = (error) => {
-    if (error) {
-      log(`Error: ${error}`);
-      updateStatusBar("error");
+    log(`Error: ${error}`);
+    // AutoClicker already stopped itself - clean up remaining resources
+    if (cdpClient) {
+      cdpClient.disconnect();
+      cdpClient = null;
     }
+    autoClicker = null;
+    updateStatusBar("error");
   };
 
   autoClicker.start();
