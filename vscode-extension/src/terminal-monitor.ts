@@ -2,11 +2,14 @@ import * as vscode from "vscode";
 
 // --- Prompt Rule types ---
 
+/** Controls newline behavior: true/false are static; "auto" detects interactive lists. */
+export type AddNewlineMode = boolean | "auto";
+
 export interface PromptRule {
   name: string;
   pattern: string;
   response: string;
-  addNewline: boolean;
+  addNewline: AddNewlineMode;
 }
 
 export interface TerminalMonitorConfig {
@@ -53,7 +56,7 @@ interface CompiledRule {
   name: string;
   pattern: RegExp;
   response: string;
-  addNewline: boolean;
+  addNewline: AddNewlineMode;
 }
 
 // --- TerminalMonitor ---
@@ -314,17 +317,48 @@ export class TerminalMonitor {
     return null;
   }
 
+  /**
+   * Detect whether recent terminal output contains an interactive list prompt.
+   * Interactive lists use ❯ (U+276F) or › (U+203A) cursor characters.
+   */
+  private detectInteractiveList(): boolean {
+    const recentText = this.getRecentLines(15);
+    return /[❯›]\s*\d/.test(recentText);
+  }
+
   private isDangerous(text: string): boolean {
     return this.compiledDangerPatterns.some((p) => p.test(text));
   }
 
   private confirmWithRule(rule: CompiledRule, promptText: string): void {
-    this.terminal.sendText(rule.response, rule.addNewline);
+    let actualResponse: string;
+    let actualNewline: boolean;
+    let detectionNote = "";
+
+    if (rule.addNewline === "auto") {
+      const isInteractive = this.detectInteractiveList();
+      if (isInteractive) {
+        // Interactive list: just press Enter to select the highlighted item
+        actualResponse = "";
+        actualNewline = true;
+        detectionNote = " [auto: interactive list → Enter only]";
+      } else {
+        // Non-interactive: send the response text followed by Enter
+        actualResponse = rule.response;
+        actualNewline = true;
+        detectionNote = " [auto: non-interactive → response + Enter]";
+      }
+    } else {
+      actualResponse = rule.response;
+      actualNewline = rule.addNewline;
+    }
+
+    this.terminal.sendText(actualResponse, actualNewline);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
     this.outputBuffer = "";
     this.log(
-      `Confirmed [${rule.name}] in ${this.terminal.name}: "${promptText}" → sent "${rule.response}" (newline=${rule.addNewline}) | Total: ${this._confirmCount}`
+      `Confirmed [${rule.name}] in ${this.terminal.name}: "${promptText}" → sent "${actualResponse}" (newline=${actualNewline})${detectionNote} | Total: ${this._confirmCount}`
     );
     this.onConfirm?.({
       promptText,

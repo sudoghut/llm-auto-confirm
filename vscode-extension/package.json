@@ -95,13 +95,13 @@
               "name": "Claude Code (numbered prompt)",
               "pattern": "(?:Allow|approve|Do you want)[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
               "response": "1",
-              "addNewline": false
+              "addNewline": "auto"
             },
             {
               "name": "Claude Code (save file prompt)",
               "pattern": "Save file to continue[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
               "response": "1",
-              "addNewline": false
+              "addNewline": "auto"
             },
             {
               "name": "Codex (selection list)",
@@ -132,8 +132,11 @@
                 "description": "Text to send when this pattern matches (e.g., '1', 'y', or '' for just Enter)"
               },
               "addNewline": {
-                "type": "boolean",
-                "description": "Whether to append a newline (Enter) after the response"
+                "oneOf": [
+                  { "type": "boolean" },
+                  { "type": "string", "enum": ["auto"] }
+                ],
+                "description": "Whether to append a newline (Enter) after the response. Use \"auto\" to auto-detect interactive list prompts (❯ cursor → Enter only) vs non-interactive (response + Enter)."
               }
             },
             "required": ["name", "pattern", "response", "addNewline"]
