@@ -93,7 +93,7 @@
           "default": [
             {
               "name": "Claude Code (numbered prompt)",
-              "pattern": "(?:Allow|approve|Do you want)[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
+              "pattern": "(?:Allow|approve|Do you want|proceed\\?)[\\s\\S]*?(?:\\d+\\s*\\.?\\s*Yes|Yes\\s*\\/\\s*No|\\b1\\s*\\.?\\s*Yes\\b[\\s\\S]{0,120}\\b2\\s*\\.?\\s*No\\b)",
               "response": "1",
               "addNewline": "auto"
             },
@@ -102,6 +102,12 @@
               "pattern": "Save file to continue[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
               "response": "1",
               "addNewline": "auto"
+            },
+            {
+              "name": "Claude Code (interactive list cursor)",
+              "pattern": "(?:\\u276F|\\u203A|>)\\s*\\d+\\s*\\.?",
+              "response": "",
+              "addNewline": true
             },
             {
               "name": "Codex (selection list)",

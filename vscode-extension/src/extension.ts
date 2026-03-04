@@ -40,16 +40,17 @@ function getMonitorConfigForCommand(
 ): TerminalMonitorConfig {
   const tuned = { ...baseConfig };
   const isCodex = isLLMCommand(commandLine, ["codex"]);
+  const isClaude = isLLMCommand(commandLine, ["claude"]);
 
   // Codex terminal sessions can stop yielding readable output while still
   // waiting for approval. Auto-enable a safer periodic fallback profile so
   // users don't need manual settings tweaks.
-  if (isCodex) {
+  if (isCodex || isClaude) {
     tuned.periodicFallback = true;
     tuned.periodicFallbackAddNewline = true;
     tuned.periodicFallbackMaxSends = Math.max(
       tuned.periodicFallbackMaxSends,
-      30
+      isCodex ? 30 : 20
     );
   }
 
