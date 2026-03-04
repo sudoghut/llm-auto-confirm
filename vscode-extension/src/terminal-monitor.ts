@@ -44,8 +44,8 @@ function stripAnsi(str: string): string {
     .replace(/\x1b\[\?[0-9;]*[hl]/g, "") // DEC private mode set/reset
     .replace(/\x1b[=>]/g, "") // Keypad modes
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "") // Control chars (keep \n \t \r)
-    .replace(/\r\n/g, "\n") // CRLF → LF
-    .replace(/\r/g, "\n"); // Lone CR → LF (preserve line structure from TUI redraws)
+    .replace(/\r\n/g, "\n") // CRLF -> LF
+    .replace(/\r/g, "\n"); // Lone CR -> LF (preserve line structure from TUI redraws)
 }
 
 const MAX_BUFFER = 4000;
@@ -62,16 +62,22 @@ interface CompiledRule {
 // --- TerminalMonitor ---
 
 export class TerminalMonitor {
+  private static readonly BUFFER_KEEP_LINES_AFTER_CONFIRM = 20;
+  private static readonly PROMPT_SIGNAL_WINDOW_MS = 15000;
+  private static readonly DUPLICATE_CONFIRM_WINDOW_MS = 2500;
+
   private outputBuffer = "";
   private isActive = true;
   private lastConfirmTime = 0;
   private lastDataTime = 0;
+  private lastPromptSignalTime = 0;
   private _confirmCount = 0;
   private compiledRules: CompiledRule[];
   private compiledFallbackPatterns: RegExp[];
   private compiledDangerPatterns: RegExp[];
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
   private streamActive = false;
+  private recentConfirmSignatures = new Map<string, number>();
 
   public onConfirm: ((event: ConfirmEvent) => void) | null = null;
   public onDangerousBlocked: ((promptText: string) => void) | null = null;
@@ -108,7 +114,7 @@ export class TerminalMonitor {
     await this.readExecution(this.execution, "main");
     this.streamActive = false;
     this.log(
-      `Main execution stream ended for terminal: ${this.terminal.name} — starting periodic fallback`
+      `Main execution stream ended for terminal: ${this.terminal.name} - starting periodic fallback`
     );
     this.startPeriodicFallback();
   }
@@ -192,6 +198,13 @@ export class TerminalMonitor {
       if (Date.now() - this.lastConfirmTime < this.config.cooldown) return;
       // Only send if terminal had output recently (within 30s)
       if (Date.now() - this.lastDataTime > 30000) return;
+      // Only send if we saw approval-like text recently (avoid blind sends)
+      if (
+        Date.now() - this.lastPromptSignalTime >
+        TerminalMonitor.PROMPT_SIGNAL_WINDOW_MS
+      ) {
+        return;
+      }
 
       // Send the default confirm response to the terminal
       const response = this.config.confirmResponse || "1";
@@ -260,10 +273,24 @@ export class TerminalMonitor {
       return;
     }
     const recentText = this.getRecentLines(30);
+    if (this.looksLikeApprovalPrompt(recentText)) {
+      this.lastPromptSignalTime = Date.now();
+      this.debugLog(
+        `[hint] Approval-like text seen in ${this.terminal.name}: "${this.trimForLog(recentText)}"`
+      );
+    }
 
     // Try prompt rules first (each rule has its own response)
     const matchedRule = this.matchRule(recentText);
     if (matchedRule) {
+      this.lastPromptSignalTime = Date.now();
+      const signature = `rule:${matchedRule.rule.name}:${this.normalizePromptText(matchedRule.matchText)}`;
+      if (this.isDuplicateConfirm(signature)) {
+        this.debugLog(
+          `[dedupe] Skipped duplicate rule confirm in ${this.terminal.name}: ${matchedRule.rule.name}`
+        );
+        return;
+      }
       if (this.isDangerous(recentText)) {
         this.log(
           `BLOCKED dangerous command in ${this.terminal.name}: ${recentText.substring(0, 100)}`
@@ -279,6 +306,14 @@ export class TerminalMonitor {
     // Fallback: old-style promptPatterns + global confirmResponse
     const matchedFallback = this.matchFallbackPattern(recentText);
     if (matchedFallback) {
+      this.lastPromptSignalTime = Date.now();
+      const signature = `fallback:${this.normalizePromptText(matchedFallback)}`;
+      if (this.isDuplicateConfirm(signature)) {
+        this.debugLog(
+          `[dedupe] Skipped duplicate fallback confirm in ${this.terminal.name}`
+        );
+        return;
+      }
       if (this.isDangerous(recentText)) {
         this.log(
           `BLOCKED dangerous command in ${this.terminal.name}: ${recentText.substring(0, 100)}`
@@ -319,15 +354,52 @@ export class TerminalMonitor {
 
   /**
    * Detect whether recent terminal output contains an interactive list prompt.
-   * Interactive lists use ❯ (U+276F) or › (U+203A) cursor characters.
+   * Interactive lists use cursor markers (U+276F / U+203A / >).
    */
   private detectInteractiveList(): boolean {
     const recentText = this.getRecentLines(15);
-    return /[❯›]\s*\d/.test(recentText);
+    return /(?:\u276f|\u203a|>)\s*\d/.test(recentText);
   }
 
   private isDangerous(text: string): boolean {
     return this.compiledDangerPatterns.some((p) => p.test(text));
+  }
+
+  private looksLikeApprovalPrompt(text: string): boolean {
+    return /(?:allow|approve|do you want|save file to continue|proceed\?|yes\s*\/\s*no|\b1\s*\.?\s*yes\b|\b2\s*\.?\s*no\b|(?:\u276f|\u203a|>)\s*\d)/i.test(
+      text
+    );
+  }
+
+  private normalizePromptText(text: string): string {
+    return text.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160);
+  }
+
+  private isDuplicateConfirm(signature: string): boolean {
+    const now = Date.now();
+    for (const [key, ts] of this.recentConfirmSignatures) {
+      if (now - ts > TerminalMonitor.DUPLICATE_CONFIRM_WINDOW_MS) {
+        this.recentConfirmSignatures.delete(key);
+      }
+    }
+    const last = this.recentConfirmSignatures.get(signature);
+    if (last && now - last <= TerminalMonitor.DUPLICATE_CONFIRM_WINDOW_MS) {
+      return true;
+    }
+    this.recentConfirmSignatures.set(signature, now);
+    return false;
+  }
+
+  private keepRecentBufferLines(linesToKeep: number): void {
+    const lines = this.outputBuffer.split("\n");
+    this.outputBuffer = lines.slice(-linesToKeep).join("\n");
+  }
+
+  private trimForLog(text: string): string {
+    const singleLine = text.replace(/\s+/g, " ").trim();
+    return singleLine.length > 160
+      ? `${singleLine.slice(0, 160)}...`
+      : singleLine;
   }
 
   private confirmWithRule(rule: CompiledRule, promptText: string): void {
@@ -341,12 +413,12 @@ export class TerminalMonitor {
         // Interactive list: just press Enter to select the highlighted item
         actualResponse = "";
         actualNewline = true;
-        detectionNote = " [auto: interactive list → Enter only]";
+        detectionNote = " [auto: interactive list -> Enter only]";
       } else {
         // Non-interactive: send the response text followed by Enter
         actualResponse = rule.response;
         actualNewline = true;
-        detectionNote = " [auto: non-interactive → response + Enter]";
+        detectionNote = " [auto: non-interactive -> response + Enter]";
       }
     } else {
       actualResponse = rule.response;
@@ -356,9 +428,9 @@ export class TerminalMonitor {
     this.terminal.sendText(actualResponse, actualNewline);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
-    this.outputBuffer = "";
+    this.keepRecentBufferLines(TerminalMonitor.BUFFER_KEEP_LINES_AFTER_CONFIRM);
     this.log(
-      `Confirmed [${rule.name}] in ${this.terminal.name}: "${promptText}" → sent "${actualResponse}" (newline=${actualNewline})${detectionNote} | Total: ${this._confirmCount}`
+      `Confirmed [${rule.name}] in ${this.terminal.name}: "${promptText}" -> sent "${actualResponse}" (newline=${actualNewline})${detectionNote} | Total: ${this._confirmCount}`
     );
     this.onConfirm?.({
       promptText,
@@ -372,9 +444,9 @@ export class TerminalMonitor {
     this.terminal.sendText(this.config.confirmResponse, true);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
-    this.outputBuffer = "";
+    this.keepRecentBufferLines(TerminalMonitor.BUFFER_KEEP_LINES_AFTER_CONFIRM);
     this.log(
-      `Confirmed [fallback] in ${this.terminal.name}: "${promptText}" → sent "${this.config.confirmResponse}" | Total: ${this._confirmCount}`
+      `Confirmed [fallback] in ${this.terminal.name}: "${promptText}" -> sent "${this.config.confirmResponse}" | Total: ${this._confirmCount}`
     );
     this.onConfirm?.({
       promptText,
