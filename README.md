@@ -142,9 +142,6 @@ code --install-extension llm-auto-confirm-0.4.1.vsix
 | `llmAutoConfirm.promptRules` | *(built-in)* | Rules with per-pattern responses (checked first) |
 | `llmAutoConfirm.promptPatterns` | *(built-in)* | Fallback regex patterns for permission prompts |
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Commands to never auto-approve |
-| `llmAutoConfirm.periodicFallback` | `false` | Periodically send confirmResponse when output stream ends (advanced) |
-| `llmAutoConfirm.periodicFallbackMaxSends` | `10` | Max periodic sends per session |
-| `llmAutoConfirm.periodicFallbackAddNewline` | `true` | Whether periodic fallback should press Enter after sending `confirmResponse` |
 
 #### WebView Settings
 
@@ -167,8 +164,6 @@ code --install-extension llm-auto-confirm-0.4.1.vsix
 - **Output log:** All actions logged to the "LLM Auto-Confirm" output channel.
 - **Terminal-scoped:** Only sends input to the specific terminal running the LLM tool.
 - **WebView safety:** Command allowlist prevents workspace config injection; per-extension tab label matching prevents cross-extension misfires.
-- **Periodic fallback off by default:** Blind send mode requires explicit opt-in.
-
 See [vscode-extension/README.md](vscode-extension/README.md) for full details.
 
 ---

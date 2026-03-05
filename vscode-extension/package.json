@@ -2,7 +2,7 @@
   "name": "llm-auto-confirm",
   "displayName": "LLM Auto Confirm",
   "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex) in VS Code terminals and WebView panels",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "sudoghut",
   "license": "MIT",
   "repository": {
@@ -164,23 +164,6 @@
             "type": "string"
           },
           "description": "Regex patterns for dangerous commands that should NOT be auto-approved"
-        },
-        "llmAutoConfirm.periodicFallback": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "**Advanced.** When the terminal output stream ends (TUI programs), periodically send the confirm response without prompt detection. Only enable if your LLM tool stops producing readable output while still prompting."
-        },
-        "llmAutoConfirm.periodicFallbackMaxSends": {
-          "type": "number",
-          "default": 10,
-          "minimum": 1,
-          "maximum": 100,
-          "description": "Maximum number of periodic fallback sends before stopping (per terminal session)"
-        },
-        "llmAutoConfirm.periodicFallbackAddNewline": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether periodic fallback should press Enter after sending confirmResponse"
         },
         "llmAutoConfirm.webviewAutoConfirm": {
           "type": "boolean",

@@ -34,29 +34,6 @@ interface ExtensionConfig {
   webviewConfig: WebviewMonitorConfig;
 }
 
-function getMonitorConfigForCommand(
-  commandLine: string,
-  baseConfig: TerminalMonitorConfig
-): TerminalMonitorConfig {
-  const tuned = { ...baseConfig };
-  const isCodex = isLLMCommand(commandLine, ["codex"]);
-  const isClaude = isLLMCommand(commandLine, ["claude"]);
-
-  // Codex terminal sessions can stop yielding readable output while still
-  // waiting for approval. Auto-enable a safer periodic fallback profile so
-  // users don't need manual settings tweaks.
-  if (isCodex || isClaude) {
-    tuned.periodicFallback = true;
-    tuned.periodicFallbackAddNewline = true;
-    tuned.periodicFallbackMaxSends = Math.max(
-      tuned.periodicFallbackMaxSends,
-      isCodex ? 30 : 20
-    );
-  }
-
-  return tuned;
-}
-
 function getConfig(): ExtensionConfig {
   const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
 
@@ -79,12 +56,6 @@ function getConfig(): ExtensionConfig {
       dangerousCommandPatterns: cfg.get<string[]>(
         "dangerousCommandPatterns",
         []
-      ),
-      periodicFallback: cfg.get<boolean>("periodicFallback", false),
-      periodicFallbackMaxSends: cfg.get<number>("periodicFallbackMaxSends", 10),
-      periodicFallbackAddNewline: cfg.get<boolean>(
-        "periodicFallbackAddNewline",
-        true
       ),
     },
     webviewAutoConfirm: cfg.get<boolean>("webviewAutoConfirm", false),
@@ -292,15 +263,10 @@ export function activate(context: vscode.ExtensionContext) {
         `Detected LLM command: "${commandLine}" in terminal: ${e.terminal.name}`
       );
 
-      // Stop any existing monitor on this terminal
-      if (monitors.has(e.terminal)) {
-        monitors.get(e.terminal)!.stop();
-      }
-
       const monitor = new TerminalMonitor(
         e.terminal,
         e.execution,
-        getMonitorConfigForCommand(commandLine, config.monitorConfig),
+        config.monitorConfig,
         log,
         debug
       );

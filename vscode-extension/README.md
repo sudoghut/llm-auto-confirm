@@ -37,7 +37,7 @@ Calls known VS Code commands exposed by LLM extensions. This mode has significan
 | Tool | Best Approach |
 |------|--------------|
 | Claude Code | Use **terminal mode** (`claude` CLI). WebView `acceptProposedDiff` only handles editor diffs. |
-| Codex | Use **terminal mode** (`codex` CLI) or Codex's own `--full-auto` flag. WebView has no commands. Codex terminal sessions are auto-tuned with periodic fallback (no manual setting changes needed). |
+| Codex | Use **terminal mode** (`codex` CLI) or Codex's own `--full-auto` flag. WebView has no commands. |
 | Kilo Code | **WebView mode** works via `toggleAutoApprove`. |
 | Cline / Roo Code | **WebView mode** may work (unverified). |
 | Aider / Goose | Use **terminal mode**. These are terminal-only tools. |
@@ -113,10 +113,7 @@ Use the status bar item or Command Palette to toggle auto-confirm on/off.
 | `llmAutoConfirm.promptPatterns` | *(see below)* | Fallback regex patterns for permission prompts |
 | `llmAutoConfirm.promptRules` | *(see below)* | Rules with per-pattern responses (checked first) |
 | `llmAutoConfirm.dangerousCommandPatterns` | `["rm -rf /", ...]` | Patterns for commands to never auto-approve |
-| `llmAutoConfirm.periodicFallback` | `false` | When the output stream ends, periodically send confirmResponse without prompt detection. **Advanced, use with caution.** |
-| `llmAutoConfirm.periodicFallbackMaxSends` | `10` | Max periodic fallback sends per terminal session (1–100) |
-| `llmAutoConfirm.periodicFallbackAddNewline` | `true` | Whether periodic fallback should press Enter after sending `confirmResponse` |
-| `llmAutoConfirm.debug` | `false` | Enable verbose debug logging (raw terminal output, match details, tick logs) |
+| `llmAutoConfirm.debug` | `false` | Enable verbose debug logging (raw terminal output, match details) |
 
 ### WebView Settings
 
@@ -189,7 +186,7 @@ You can add custom rules and patterns for other LLM tools.
 - **Easy toggle**: Click the status bar item or use the Command Palette to stop at any time.
 - **Terminal-scoped**: Only sends input to the specific terminal running the LLM tool. No keyboard/mouse interference.
 - **WebView safety**: Uses VS Code command API only — no OS-level input simulation, no shell execution, no command injection risk. User-configured commands are validated against an allowlist of known LLM extension prefixes. Each built-in command is bound to its extension's webview tab label, preventing cross-extension misfires.
-- **Periodic fallback off by default**: The fallback mode (blind send without prompt detection) is disabled by default and requires explicit opt-in.
+- **Post-confirm cooldown**: After each confirm, an 8-second cooldown prevents duplicate sends caused by TUI redraws.
 
 ## Comparison with Python Script
 

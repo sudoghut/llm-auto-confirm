@@ -18,12 +18,6 @@ export interface TerminalMonitorConfig {
   promptPatterns: string[];
   promptRules: PromptRule[];
   dangerousCommandPatterns: string[];
-  /** Enable periodic fallback when the output stream ends. Default: false. */
-  periodicFallback: boolean;
-  /** Max number of periodic fallback sends before stopping. Default: 10. */
-  periodicFallbackMaxSends: number;
-  /** Whether periodic fallback should press Enter after response. Default: true. */
-  periodicFallbackAddNewline: boolean;
 }
 
 export interface ConfirmEvent {
@@ -62,22 +56,22 @@ interface CompiledRule {
 // --- TerminalMonitor ---
 
 export class TerminalMonitor {
-  private static readonly BUFFER_KEEP_LINES_AFTER_CONFIRM = 20;
-  private static readonly PROMPT_SIGNAL_WINDOW_MS = 15000;
-  private static readonly DUPLICATE_CONFIRM_WINDOW_MS = 2500;
+  /** Hard cooldown after a confirm: ignore ALL pattern checks during this window.
+   *  Claude Code's TUI redraws the prompt for several seconds after Enter is sent. */
+  private static readonly POST_CONFIRM_COOLDOWN_MS = 8000;
 
   private outputBuffer = "";
   private isActive = true;
   private lastConfirmTime = 0;
-  private lastDataTime = 0;
-  private lastPromptSignalTime = 0;
   private _confirmCount = 0;
   private compiledRules: CompiledRule[];
   private compiledFallbackPatterns: RegExp[];
   private compiledDangerPatterns: RegExp[];
-  private fallbackTimer: ReturnType<typeof setInterval> | null = null;
-  private streamActive = false;
-  private recentConfirmSignatures = new Map<string, number>();
+  /** Timer that fires once after post-confirm cooldown to re-check the buffer. */
+  private postConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Total bytes received via execution.read() - for diagnostics. */
+  private totalBytesRead = 0;
+  private totalChunksRead = 0;
 
   public onConfirm: ((event: ConfirmEvent) => void) | null = null;
   public onDangerousBlocked: ((promptText: string) => void) | null = null;
@@ -110,13 +104,10 @@ export class TerminalMonitor {
     this.log(
       `Loaded ${this.compiledRules.length} prompt rules, ${this.compiledFallbackPatterns.length} fallback patterns`
     );
-    this.streamActive = true;
     await this.readExecution(this.execution, "main");
-    this.streamActive = false;
     this.log(
-      `Main execution stream ended for terminal: ${this.terminal.name} - starting periodic fallback`
+      `Main stream ended for ${this.terminal.name} | total: ${this.totalChunksRead} chunks, ${this.totalBytesRead} bytes`
     );
-    this.startPeriodicFallback();
   }
 
   /**
@@ -129,10 +120,10 @@ export class TerminalMonitor {
   ): Promise<void> {
     const cmd = execution.commandLine.value.substring(0, 80);
     this.log(`Attached sub-execution: "${cmd}"`);
-    this.streamActive = true;
+    const prevBytes = this.totalBytesRead;
     await this.readExecution(execution, "sub");
-    this.streamActive = false;
-    this.log(`Sub-execution ended: "${cmd}"`);
+    const bytesThisSub = this.totalBytesRead - prevBytes;
+    this.log(`Sub-execution ended: "${cmd}" | read ${bytesThisSub} bytes`);
   }
 
   private async readExecution(
@@ -142,7 +133,8 @@ export class TerminalMonitor {
     try {
       for await (const data of execution.read()) {
         if (!this.isActive) break;
-        this.lastDataTime = Date.now();
+        this.totalBytesRead += data.length;
+        this.totalChunksRead++;
         if (data.length > 0) {
           const preview = data.substring(0, 200).replace(/\n/g, "\\n");
           this.debugLog(`[raw:${label}] ${preview}${data.length > 200 ? "..." : ""}`);
@@ -159,77 +151,13 @@ export class TerminalMonitor {
 
   stop(): void {
     this.isActive = false;
-    this.stopPeriodicFallback();
-  }
-
-  /**
-   * When execution.read() stops yielding data (common with interactive TUI programs),
-   * optionally fall back to periodically sending the confirm keystroke.
-   *
-   * Disabled by default (config.periodicFallback = false) because it sends
-   * without prompt detection or dangerous-command checks.  Enable only if
-   * your LLM tool stops producing readable output while still prompting.
-   */
-  private startPeriodicFallback(): void {
-    if (this.fallbackTimer || !this.isActive) return;
-
-    // Opt-in only
-    if (!this.config.periodicFallback) {
-      this.log(
-        `[periodic] Fallback disabled for ${this.terminal.name} (set periodicFallback=true to enable)`
-      );
-      return;
+    if (this.postConfirmTimer) {
+      clearTimeout(this.postConfirmTimer);
+      this.postConfirmTimer = null;
     }
-
-    const maxSends = this.config.periodicFallbackMaxSends || 10;
-    let periodicSendCount = 0;
-    const interval = Math.max(this.config.cooldown * 2, 2000);
     this.log(
-      `[periodic] Fallback active for ${this.terminal.name}, interval=${interval}ms, max=${maxSends}`
+      `Monitor stopped for ${this.terminal.name} | total: ${this.totalChunksRead} chunks, ${this.totalBytesRead} bytes, ${this._confirmCount} confirms`
     );
-    this.fallbackTimer = setInterval(() => {
-      if (!this.isActive || periodicSendCount >= maxSends) {
-        this.stopPeriodicFallback();
-        return;
-      }
-      // If a sub-execution stream is active, let it handle detection instead
-      if (this.streamActive) return;
-      // Respect cooldown
-      if (Date.now() - this.lastConfirmTime < this.config.cooldown) return;
-      // Only send if terminal had output recently (within 30s)
-      if (Date.now() - this.lastDataTime > 30000) return;
-      // Only send if we saw approval-like text recently (avoid blind sends)
-      if (
-        Date.now() - this.lastPromptSignalTime >
-        TerminalMonitor.PROMPT_SIGNAL_WINDOW_MS
-      ) {
-        return;
-      }
-
-      // Send the default confirm response to the terminal
-      const response = this.config.confirmResponse || "1";
-      this.terminal.sendText(response, this.config.periodicFallbackAddNewline);
-      this._confirmCount++;
-      periodicSendCount++;
-      this.lastConfirmTime = Date.now();
-      this.debugLog(
-        `[periodic] Sent "${response}" (newline=${this.config.periodicFallbackAddNewline}) to ${this.terminal.name} | periodic=${periodicSendCount}/${maxSends} | Total: ${this._confirmCount}`
-      );
-      this.onConfirm?.({
-        promptText: "(periodic fallback)",
-        ruleName: "periodic",
-        timestamp: new Date(),
-        terminalName: this.terminal.name,
-      });
-    }, interval);
-  }
-
-  private stopPeriodicFallback(): void {
-    if (this.fallbackTimer) {
-      clearInterval(this.fallbackTimer);
-      this.fallbackTimer = null;
-      this.log(`[periodic] Fallback stopped for ${this.terminal.name}`);
-    }
   }
 
   updateConfig(config: TerminalMonitorConfig): void {
@@ -268,29 +196,37 @@ export class TerminalMonitor {
     }
   }
 
+  /**
+   * Schedule a one-shot buffer check after the post-confirm cooldown expires.
+   * This catches prompts whose text arrived during the cooldown but whose
+   * TUI animation stopped before the cooldown ended (so no new data triggers checkForPrompt).
+   */
+  private schedulePostConfirmCheck(): void {
+    if (this.postConfirmTimer) {
+      clearTimeout(this.postConfirmTimer);
+    }
+    this.postConfirmTimer = setTimeout(() => {
+      this.postConfirmTimer = null;
+      if (!this.isActive) return;
+      this.debugLog(`[post-confirm] Cooldown expired, re-checking buffer (${this.outputBuffer.length} chars)`);
+      this.checkForPrompt();
+    }, TerminalMonitor.POST_CONFIRM_COOLDOWN_MS + 200); // +200ms margin
+  }
+
   private checkForPrompt(): void {
-    if (Date.now() - this.lastConfirmTime < this.config.cooldown) {
+    const sinceLastConfirm = Date.now() - this.lastConfirmTime;
+    const effectiveCooldown = Math.max(
+      this.config.cooldown,
+      TerminalMonitor.POST_CONFIRM_COOLDOWN_MS
+    );
+    if (sinceLastConfirm < effectiveCooldown) {
       return;
     }
     const recentText = this.getRecentLines(30);
-    if (this.looksLikeApprovalPrompt(recentText)) {
-      this.lastPromptSignalTime = Date.now();
-      this.debugLog(
-        `[hint] Approval-like text seen in ${this.terminal.name}: "${this.trimForLog(recentText)}"`
-      );
-    }
 
     // Try prompt rules first (each rule has its own response)
     const matchedRule = this.matchRule(recentText);
     if (matchedRule) {
-      this.lastPromptSignalTime = Date.now();
-      const signature = `rule:${matchedRule.rule.name}:${this.normalizePromptText(matchedRule.matchText)}`;
-      if (this.isDuplicateConfirm(signature)) {
-        this.debugLog(
-          `[dedupe] Skipped duplicate rule confirm in ${this.terminal.name}: ${matchedRule.rule.name}`
-        );
-        return;
-      }
       if (this.isDangerous(recentText)) {
         this.log(
           `BLOCKED dangerous command in ${this.terminal.name}: ${recentText.substring(0, 100)}`
@@ -306,14 +242,6 @@ export class TerminalMonitor {
     // Fallback: old-style promptPatterns + global confirmResponse
     const matchedFallback = this.matchFallbackPattern(recentText);
     if (matchedFallback) {
-      this.lastPromptSignalTime = Date.now();
-      const signature = `fallback:${this.normalizePromptText(matchedFallback)}`;
-      if (this.isDuplicateConfirm(signature)) {
-        this.debugLog(
-          `[dedupe] Skipped duplicate fallback confirm in ${this.terminal.name}`
-        );
-        return;
-      }
       if (this.isDangerous(recentText)) {
         this.log(
           `BLOCKED dangerous command in ${this.terminal.name}: ${recentText.substring(0, 100)}`
@@ -365,36 +293,6 @@ export class TerminalMonitor {
     return this.compiledDangerPatterns.some((p) => p.test(text));
   }
 
-  private looksLikeApprovalPrompt(text: string): boolean {
-    return /(?:allow|approve|do you want|save file to continue|proceed\?|yes\s*\/\s*no|\b1\s*\.?\s*yes\b|\b2\s*\.?\s*no\b|(?:\u276f|\u203a|>)\s*\d)/i.test(
-      text
-    );
-  }
-
-  private normalizePromptText(text: string): string {
-    return text.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160);
-  }
-
-  private isDuplicateConfirm(signature: string): boolean {
-    const now = Date.now();
-    for (const [key, ts] of this.recentConfirmSignatures) {
-      if (now - ts > TerminalMonitor.DUPLICATE_CONFIRM_WINDOW_MS) {
-        this.recentConfirmSignatures.delete(key);
-      }
-    }
-    const last = this.recentConfirmSignatures.get(signature);
-    if (last && now - last <= TerminalMonitor.DUPLICATE_CONFIRM_WINDOW_MS) {
-      return true;
-    }
-    this.recentConfirmSignatures.set(signature, now);
-    return false;
-  }
-
-  private keepRecentBufferLines(linesToKeep: number): void {
-    const lines = this.outputBuffer.split("\n");
-    this.outputBuffer = lines.slice(-linesToKeep).join("\n");
-  }
-
   private trimForLog(text: string): string {
     const singleLine = text.replace(/\s+/g, " ").trim();
     return singleLine.length > 160
@@ -410,12 +308,10 @@ export class TerminalMonitor {
     if (rule.addNewline === "auto") {
       const isInteractive = this.detectInteractiveList();
       if (isInteractive) {
-        // Interactive list: just press Enter to select the highlighted item
         actualResponse = "";
         actualNewline = true;
         detectionNote = " [auto: interactive list -> Enter only]";
       } else {
-        // Non-interactive: send the response text followed by Enter
         actualResponse = rule.response;
         actualNewline = true;
         detectionNote = " [auto: non-interactive -> response + Enter]";
@@ -428,7 +324,8 @@ export class TerminalMonitor {
     this.terminal.sendText(actualResponse, actualNewline);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
-    this.keepRecentBufferLines(TerminalMonitor.BUFFER_KEEP_LINES_AFTER_CONFIRM);
+    this.outputBuffer = "";
+    this.schedulePostConfirmCheck();
     this.log(
       `Confirmed [${rule.name}] in ${this.terminal.name}: "${promptText}" -> sent "${actualResponse}" (newline=${actualNewline})${detectionNote} | Total: ${this._confirmCount}`
     );
@@ -444,7 +341,8 @@ export class TerminalMonitor {
     this.terminal.sendText(this.config.confirmResponse, true);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
-    this.keepRecentBufferLines(TerminalMonitor.BUFFER_KEEP_LINES_AFTER_CONFIRM);
+    this.outputBuffer = "";
+    this.schedulePostConfirmCheck();
     this.log(
       `Confirmed [fallback] in ${this.terminal.name}: "${promptText}" -> sent "${this.config.confirmResponse}" | Total: ${this._confirmCount}`
     );
