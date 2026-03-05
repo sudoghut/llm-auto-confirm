@@ -44,6 +44,11 @@ jobs:
       - name: Package VSIX
         run: npx @vscode/vsce package --out llm-auto-confirm-${{ github.ref_name }}.vsix
 
+      - name: Publish to VS Code Marketplace
+        run: npx @vscode/vsce publish --packagePath llm-auto-confirm-${{ github.ref_name }}.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
