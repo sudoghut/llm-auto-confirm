@@ -27,6 +27,13 @@ export interface ConfirmEvent {
   terminalName: string;
 }
 
+export interface SuppressedEvent {
+  promptText: string;
+  ruleName: string;
+  timestamp: Date;
+  terminalName: string;
+}
+
 // --- ANSI stripping ---
 
 /** Strip ANSI escape sequences from terminal output */
@@ -72,8 +79,10 @@ export class TerminalMonitor {
   /** Total bytes received via execution.read() - for diagnostics. */
   private totalBytesRead = 0;
   private totalChunksRead = 0;
+  private readonly shouldConfirm: () => boolean;
 
   public onConfirm: ((event: ConfirmEvent) => void) | null = null;
+  public onSuppressed: ((event: SuppressedEvent) => void) | null = null;
   public onDangerousBlocked: ((promptText: string) => void) | null = null;
   public onError: ((error: string) => void) | null = null;
 
@@ -81,9 +90,11 @@ export class TerminalMonitor {
     private terminal: vscode.Terminal,
     private execution: vscode.TerminalShellExecution,
     private config: TerminalMonitorConfig,
+    shouldConfirm: () => boolean,
     private log: (msg: string) => void,
     private debugLog: (msg: string) => void = log
   ) {
+    this.shouldConfirm = shouldConfirm;
     this.compiledRules = this.compileRules(config.promptRules);
     this.compiledFallbackPatterns = config.promptPatterns.map(
       (p) => new RegExp(p, "is")
@@ -300,6 +311,23 @@ export class TerminalMonitor {
       : singleLine;
   }
 
+  private suppressMatch(promptText: string, ruleName: string): boolean {
+    if (this.shouldConfirm()) {
+      return false;
+    }
+
+    this.log(
+      `Matched [${ruleName}] in ${this.terminal.name} but suppressed in observe-only mode: "${promptText}"`
+    );
+    this.onSuppressed?.({
+      promptText,
+      ruleName,
+      timestamp: new Date(),
+      terminalName: this.terminal.name,
+    });
+    return true;
+  }
+
   private confirmWithRule(rule: CompiledRule, promptText: string): void {
     let actualResponse: string;
     let actualNewline: boolean;
@@ -321,6 +349,10 @@ export class TerminalMonitor {
       actualNewline = rule.addNewline;
     }
 
+    if (this.suppressMatch(promptText, rule.name)) {
+      return;
+    } 
+
     this.terminal.sendText(actualResponse, actualNewline);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();
@@ -338,6 +370,10 @@ export class TerminalMonitor {
   }
 
   private confirmWithFallback(promptText: string): void {
+    if (this.suppressMatch(promptText, "fallback")) {
+      return;
+    }
+
     this.terminal.sendText(this.config.confirmResponse, true);
     this._confirmCount++;
     this.lastConfirmTime = Date.now();

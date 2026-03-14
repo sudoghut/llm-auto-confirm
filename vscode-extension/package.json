@@ -31,7 +31,7 @@
       },
       {
         "command": "llm-auto-confirm.toggle",
-        "title": "LLM Auto Confirm: Toggle"
+        "title": "LLM Auto Confirm: Pause/Resume Auto-Confirm"
       },
       {
         "command": "llm-auto-confirm.toggleWebview",

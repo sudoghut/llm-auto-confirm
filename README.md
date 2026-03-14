@@ -89,6 +89,13 @@ python auto_confirm.py --capture cursor_yes
 
 Monitors terminal output using VS Code's Terminal Shell Integration API. Auto-detects when you run an LLM tool (e.g., `claude`, `aider`) and confirms permission prompts automatically. Optionally supports WebView-based LLM extensions via the VS Code command API.
 
+The VS Code extension supports two runtime states from the status bar:
+
+- **Active**: auto-confirm is allowed to respond to prompts.
+- **Observe Only**: terminals and WebViews are still watched, but matches are only logged.
+
+The status bar toggle only switches between these two states. It does not fully stop monitoring; use the extension `Start` / `Stop` commands for that.
+
 ### Setup
 
 **Install from Marketplace:**
@@ -135,7 +142,7 @@ code --install-extension llm-auto-confirm-0.4.1.vsix
 
 | Setting | Default | Description |
 |---|---|---|
-| `llmAutoConfirm.enabled` | `true` | Enable auto-confirmation on startup |
+| `llmAutoConfirm.enabled` | `true` | Start monitoring on startup |
 | `llmAutoConfirm.commandPatterns` | `["claude", "aider", "goose", "codex"]` | Command patterns to monitor |
 | `llmAutoConfirm.confirmResponse` | `"1"` | Fallback text to send when no prompt rule matches |
 | `llmAutoConfirm.cooldown` | `1000` | Cooldown (ms) after confirming |
@@ -160,8 +167,9 @@ code --install-extension llm-auto-confirm-0.4.1.vsix
 ### Safety
 
 - **Dangerous command blocking:** Commands matching danger patterns are never auto-approved.
-- **Status bar indicator:** Shows state (Off / On / Watching) with mode label.
+- **Status bar indicator:** Shows whether monitoring is stopped, active, or in observe-only mode.
 - **Output log:** All actions logged to the "LLM Auto-Confirm" output channel.
+- **Observe-only toggle:** Clicking the status bar pauses auto-confirm without detaching existing terminal watches.
 - **Terminal-scoped:** Only sends input to the specific terminal running the LLM tool.
 - **WebView safety:** Command allowlist prevents workspace config injection; per-extension tab label matching prevents cross-extension misfires.
 See [vscode-extension/README.md](vscode-extension/README.md) for full details.
