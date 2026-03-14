@@ -8,6 +8,11 @@ A VS Code extension that auto-confirms permission prompts for LLM coding assista
 
 Reads terminal output via the VS Code Terminal Shell Integration API, matches prompts with regex, and sends the appropriate response to the specific terminal. This is the primary and most reliable mode.
 
+The status bar toggle now switches between two runtime states without dropping terminal attachments:
+
+- **Active**: prompt matches are auto-confirmed.
+- **Observe Only**: prompt matches are logged, but no text is sent back to the terminal or WebView.
+
 | Tool | Terminal Command | Prompt Rule | Response | Status |
 |------|-----------------|-------------|----------|--------|
 | **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want)[\s\S]*?\d+\s*\.?\s*Yes` | `1` | Verified |
@@ -49,7 +54,7 @@ Calls known VS Code commands exposed by LLM extensions. This mode has significan
 1. The extension listens for terminal commands matching LLM tool patterns (e.g., `claude`, `aider`).
 2. When detected, it streams the terminal output using VS Code's Terminal Shell Integration API.
 3. It matches the output against `promptRules` (checked in order; first match wins).
-4. When a prompt matches, it sends the rule's configured response to that specific terminal.
+4. When a prompt matches, it sends the rule's configured response to that specific terminal in **Active** mode, or logs a suppressed match in **Observe Only** mode.
 5. Dangerous commands (e.g., `rm -rf /`) are automatically blocked.
 
 **No CDP, no special flags, no mouse/keyboard interference** — it only writes to the target terminal via the VS Code API.
@@ -93,7 +98,7 @@ code --install-extension llm-auto-confirm-0.4.1.vsix
 3. Run your LLM tool (e.g., `claude`, `aider`)
 4. Permission prompts are automatically confirmed
 
-Use the status bar item or Command Palette to toggle auto-confirm on/off.
+Use the status bar item to switch between **Active** and **Observe Only**. It does not stop monitoring. Use the Command Palette `Start` / `Stop` commands only when you want to fully start or stop monitoring.
 
 ## Requirements
 
@@ -106,7 +111,7 @@ Use the status bar item or Command Palette to toggle auto-confirm on/off.
 
 | Setting | Default | Description |
 |---|---|---|
-| `llmAutoConfirm.enabled` | `true` | Enable auto-confirmation on startup |
+| `llmAutoConfirm.enabled` | `true` | Start monitoring on startup (status bar still lets you pause auto-confirm into Observe Only mode) |
 | `llmAutoConfirm.commandPatterns` | `["claude", "aider", "goose", "codex"]` | Command patterns to monitor in terminals |
 | `llmAutoConfirm.confirmResponse` | `"1"` | Fallback text to send when no prompt rule matches |
 | `llmAutoConfirm.cooldown` | `1000` | Cooldown (ms) after confirming before checking again |
@@ -181,9 +186,9 @@ You can add custom rules and patterns for other LLM tools.
 ## Safety
 
 - **Dangerous command blocking**: Commands matching `dangerousCommandPatterns` are never auto-approved.
-- **Status bar indicator**: Shows current state (Off / On / Watching) with mode label (Terminal / Terminal+WebView).
+- **Status bar indicator**: Shows whether monitoring is stopped, active, or in observe-only mode, plus the current mode label (Terminal / Terminal+WebView).
 - **Output log**: All actions are logged to the "LLM Auto-Confirm" output channel.
-- **Easy toggle**: Click the status bar item or use the Command Palette to stop at any time.
+- **Observe-only toggle**: Click the status bar item to pause auto-confirm while keeping terminal watchers attached.
 - **Terminal-scoped**: Only sends input to the specific terminal running the LLM tool. No keyboard/mouse interference.
 - **WebView safety**: Uses VS Code command API only — no OS-level input simulation, no shell execution, no command injection risk. User-configured commands are validated against an allowlist of known LLM extension prefixes. Each built-in command is bound to its extension's webview tab label, preventing cross-extension misfires.
 - **Post-confirm cooldown**: After each confirm, an 8-second cooldown prevents duplicate sends caused by TUI redraws.

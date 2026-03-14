@@ -111,6 +111,7 @@ export class WebviewMonitor {
 
   constructor(
     private config: WebviewMonitorConfig,
+    private shouldExecute: () => boolean,
     private log: (msg: string) => void,
     private debugLog: (msg: string) => void = log
   ) {}
@@ -232,6 +233,11 @@ export class WebviewMonitor {
 
   private async doTick(): Promise<void> {
     const now = Date.now();
+
+    if (!this.shouldExecute()) {
+      this.debugLog("[webview] Observe-only mode: skipping approval commands.");
+      return;
+    }
 
     // Cooldown
     if (now - this.lastSendTime < this.config.cooldown) return;

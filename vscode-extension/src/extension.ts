@@ -12,7 +12,8 @@ import {
 
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
-let isEnabled = false;
+let isMonitoring = false;
+let isAutoConfirmEnabled = false;
 let isWebviewEnabled = false;
 
 const monitors = new Map<vscode.Terminal, TerminalMonitor>();
@@ -104,26 +105,32 @@ function debug(msg: string) {
 
 function updateStatusBar() {
   const terminalCount = monitors.size;
-  if (!isEnabled) {
-    statusBarItem.text = "$(circle-slash) Auto-Confirm: Off";
+  if (!isMonitoring) {
+    statusBarItem.text = "$(circle-slash) Auto-Confirm: Stopped";
     statusBarItem.backgroundColor = undefined;
-    statusBarItem.tooltip = "Click to enable LLM Auto-Confirm";
+    statusBarItem.tooltip = "Click to start LLM Auto-Confirm";
   } else {
     const mode = isWebviewEnabled ? "Terminal+WebView" : "Terminal";
+    const stateLabel = isAutoConfirmEnabled ? "Active" : "Observe Only";
+    const icon = isAutoConfirmEnabled ? "$(eye)" : "$(debug-pause)";
     if (terminalCount > 0) {
-      statusBarItem.text = `$(eye) Auto-Confirm: Watching [${mode}]`;
+      statusBarItem.text = `${icon} Auto-Confirm: Watching (${stateLabel}) [${mode}]`;
     } else {
-      statusBarItem.text = `$(check) Auto-Confirm: On [${mode}]`;
+      statusBarItem.text = `${icon} Auto-Confirm: ${stateLabel} [${mode}]`;
     }
-    statusBarItem.backgroundColor = new vscode.ThemeColor(
-      "statusBarItem.warningBackground"
-    );
+    statusBarItem.backgroundColor = isAutoConfirmEnabled
+      ? new vscode.ThemeColor("statusBarItem.warningBackground")
+      : undefined;
     statusBarItem.tooltip = [
+      `State: ${stateLabel}`,
       `Mode: ${mode}`,
       terminalCount > 0
         ? `Monitoring ${terminalCount} terminal(s)`
         : "Waiting for LLM commands",
-      "Click to disable",
+      isAutoConfirmEnabled
+        ? "Click to switch to observe-only mode"
+        : "Click to resume auto-confirm",
+      "Use Start/Stop commands in the Command Palette to fully start or stop monitoring",
     ].join("\n");
   }
   statusBarItem.show();
@@ -132,7 +139,8 @@ function updateStatusBar() {
 // --- Start / Stop ---
 
 function startMonitoring() {
-  isEnabled = true;
+  isMonitoring = true;
+  isAutoConfirmEnabled = true;
   const config = getConfig();
 
   // Start webview monitor if configured
@@ -141,12 +149,13 @@ function startMonitoring() {
   }
 
   updateStatusBar();
-  log("Auto-confirm enabled. Listening for LLM commands in terminals...");
-  vscode.window.showInformationMessage("LLM Auto-Confirm enabled.");
+  log("Auto-confirm active. Listening for LLM commands in terminals...");
+  vscode.window.showInformationMessage("LLM Auto-Confirm active.");
 }
 
 function stopMonitoring() {
-  isEnabled = false;
+  isMonitoring = false;
+  isAutoConfirmEnabled = false;
   for (const [terminal, monitor] of monitors) {
     monitor.stop();
     log(`Stopped monitoring terminal: ${terminal.name}`);
@@ -155,15 +164,26 @@ function stopMonitoring() {
   monitorExecutions.clear();
   stopWebviewMonitor();
   updateStatusBar();
-  log("Auto-confirm disabled.");
-  vscode.window.showInformationMessage("LLM Auto-Confirm disabled.");
+  log("Auto-confirm stopped.");
+  vscode.window.showInformationMessage("LLM Auto-Confirm stopped.");
 }
 
 function toggleMonitoring() {
-  if (isEnabled) {
-    stopMonitoring();
-  } else {
+  if (!isMonitoring) {
     startMonitoring();
+  } else {
+    isAutoConfirmEnabled = !isAutoConfirmEnabled;
+    updateStatusBar();
+    log(
+      isAutoConfirmEnabled
+        ? "Auto-confirm resumed. Prompt matches will be approved."
+        : "Auto-confirm paused. Continuing to watch terminals in observe-only mode."
+    );
+    vscode.window.showInformationMessage(
+      isAutoConfirmEnabled
+        ? "LLM Auto-Confirm active."
+        : "LLM Auto-Confirm paused. Still watching terminals."
+    );
   }
 }
 
@@ -175,7 +195,12 @@ function startWebviewMonitor(config?: ExtensionConfig) {
   }
   const cfg = config ?? getConfig();
   isWebviewEnabled = true;
-  webviewMonitor = new WebviewMonitor(cfg.webviewConfig, log, debug);
+  webviewMonitor = new WebviewMonitor(
+    cfg.webviewConfig,
+    () => isAutoConfirmEnabled,
+    log,
+    debug
+  );
   webviewMonitor.onCommandExecuted = () => {
     updateStatusBar();
   };
@@ -199,9 +224,10 @@ function toggleWebviewMonitor() {
       "LLM Auto-Confirm: WebView mode disabled."
     );
   } else {
-    if (!isEnabled) {
+    if (!isMonitoring) {
       // Also enable the main monitoring
-      isEnabled = true;
+      isMonitoring = true;
+      isAutoConfirmEnabled = true;
     }
     startWebviewMonitor();
     vscode.window.showInformationMessage(
@@ -241,7 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Core: auto-detect LLM commands in any terminal
   context.subscriptions.push(
     vscode.window.onDidStartTerminalShellExecution(async (e) => {
-      if (!isEnabled) return;
+      if (!isMonitoring) return;
 
       const config = getConfig();
       const commandLine = e.execution.commandLine.value;
@@ -267,6 +293,7 @@ export function activate(context: vscode.ExtensionContext) {
         e.terminal,
         e.execution,
         config.monitorConfig,
+        () => isAutoConfirmEnabled,
         log,
         debug
       );
@@ -274,6 +301,8 @@ export function activate(context: vscode.ExtensionContext) {
       monitor.onConfirm = () => {
         updateStatusBar();
       };
+
+      monitor.onSuppressed = () => {};
 
       monitor.onDangerousBlocked = (promptText) => {
         vscode.window.showWarningMessage(
@@ -334,7 +363,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration("llmAutoConfirm")) return;
       const config = getConfig();
 
-      if (config.enabled !== isEnabled) {
+      if (config.enabled !== isMonitoring) {
         if (config.enabled) {
           startMonitoring();
         } else {
@@ -349,7 +378,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Update webview monitor
       if (config.webviewAutoConfirm !== isWebviewEnabled) {
-        if (config.webviewAutoConfirm && isEnabled) {
+        if (config.webviewAutoConfirm && isMonitoring) {
           startWebviewMonitor(config);
         } else {
           stopWebviewMonitor();
@@ -366,16 +395,17 @@ export function activate(context: vscode.ExtensionContext) {
   // Auto-start if configured
   const initialConfig = getConfig();
   if (initialConfig.enabled) {
-    isEnabled = true;
+    isMonitoring = true;
+    isAutoConfirmEnabled = true;
     if (initialConfig.webviewAutoConfirm) {
       startWebviewMonitor(initialConfig);
     }
     updateStatusBar();
     log(
-      `Extension activated. Auto-confirm enabled. WebView: ${initialConfig.webviewAutoConfirm ? "on" : "off"}.`
+      `Extension activated. Auto-confirm active. WebView: ${initialConfig.webviewAutoConfirm ? "on" : "off"}.`
     );
   } else {
-    log("Extension activated. Auto-confirm disabled.");
+    log("Extension activated. Auto-confirm stopped.");
   }
 }
 
