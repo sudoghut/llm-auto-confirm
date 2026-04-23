@@ -66,6 +66,10 @@ export class TerminalMonitor {
   /** Hard cooldown after a confirm: ignore ALL pattern checks during this window.
    *  Claude Code's TUI redraws the prompt for several seconds after Enter is sent. */
   private static readonly POST_CONFIRM_COOLDOWN_MS = 8000;
+  /** Safety-net periodic re-scan of the buffer. Catches prompts that arrive when
+   *  VS Code's shell integration stops yielding data on the main execution stream
+   *  (e.g., after sub-executions end, or for Claude Code's internal bash tool). */
+  private static readonly PERIODIC_RESCAN_MS = 3000;
 
   private outputBuffer = "";
   private isActive = true;
@@ -76,6 +80,8 @@ export class TerminalMonitor {
   private compiledDangerPatterns: RegExp[];
   /** Timer that fires once after post-confirm cooldown to re-check the buffer. */
   private postConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Periodic buffer re-scan as a safety net against silent streams. */
+  private periodicTimer: ReturnType<typeof setInterval> | null = null;
   /** Total bytes received via execution.read() - for diagnostics. */
   private totalBytesRead = 0;
   private totalChunksRead = 0;
@@ -115,10 +121,21 @@ export class TerminalMonitor {
     this.log(
       `Loaded ${this.compiledRules.length} prompt rules, ${this.compiledFallbackPatterns.length} fallback patterns`
     );
+    this.startPeriodicRescan();
     await this.readExecution(this.execution, "main");
     this.log(
       `Main stream ended for ${this.terminal.name} | total: ${this.totalChunksRead} chunks, ${this.totalBytesRead} bytes`
     );
+  }
+
+  private startPeriodicRescan(): void {
+    if (this.periodicTimer) return;
+    this.periodicTimer = setInterval(() => {
+      if (!this.isActive) return;
+      if (this.outputBuffer.length === 0) return;
+      this.debugLog(`[periodic] Re-scanning buffer (${this.outputBuffer.length} chars)`);
+      this.checkForPrompt();
+    }, TerminalMonitor.PERIODIC_RESCAN_MS);
   }
 
   /**
@@ -165,6 +182,10 @@ export class TerminalMonitor {
     if (this.postConfirmTimer) {
       clearTimeout(this.postConfirmTimer);
       this.postConfirmTimer = null;
+    }
+    if (this.periodicTimer) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
     }
     this.log(
       `Monitor stopped for ${this.terminal.name} | total: ${this.totalChunksRead} chunks, ${this.totalBytesRead} bytes, ${this._confirmCount} confirms`

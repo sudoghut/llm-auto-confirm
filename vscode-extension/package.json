@@ -2,7 +2,7 @@
   "name": "llm-auto-confirm",
   "displayName": "LLM Auto Confirm",
   "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex) in VS Code terminals and WebView panels",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "sudoghut",
   "license": "MIT",
   "repository": {
