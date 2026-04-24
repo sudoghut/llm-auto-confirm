@@ -162,7 +162,7 @@ Built-in commands for Kilo Code, Claude Code (diff only), Cline, and Roo Code ar
   },
   {
     "name": "Y/n prompt (Aider, etc.)",
-    "pattern": "(?:Y\\/?n|y\\/N|\\(y\\)es|\\(n\\)o)",
+    "pattern": "(?:[\\[\\(]\\s*y\\s*\\/\\s*n\\s*[\\]\\)]|\\(y\\)es|\\(n\\)o)",
     "response": "y",
     "addNewline": true
   }
@@ -177,7 +177,7 @@ Used with `confirmResponse` when no `promptRules` match:
 [
   "(?:Allow|Do you want).*(?:Yes|No)",
   "Save file to continue",
-  "(?:Y\\/?n|y\\/N|\\(y\\)es|\\(n\\)o)"
+  "(?:[\\[\\(]\\s*y\\s*\\/\\s*n\\s*[\\]\\)]|\\(y\\)es|\\(n\\)o)"
 ]
 ```
 

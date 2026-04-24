@@ -2,7 +2,7 @@
   "name": "llm-auto-confirm",
   "displayName": "LLM Auto Confirm",
   "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex) in VS Code terminals and WebView panels",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "sudoghut",
   "license": "MIT",
   "repository": {
@@ -81,7 +81,7 @@
           "default": [
             "(?:Allow|Do you want).*(?:Yes|No)",
             "Save file to continue",
-            "(?:Y\\/?n|y\\/N|\\(y\\)es|\\(n\\)o)"
+            "(?:[\\[\\(]\\s*y\\s*\\/\\s*n\\s*[\\]\\)]|\\(y\\)es|\\(n\\)o)"
           ],
           "items": {
             "type": "string"
@@ -117,7 +117,7 @@
             },
             {
               "name": "Y/n prompt (Aider, etc.)",
-              "pattern": "(?:Y\\/?n|y\\/N|\\(y\\)es|\\(n\\)o)",
+              "pattern": "(?:[\\[\\(]\\s*y\\s*\\/\\s*n\\s*[\\]\\)]|\\(y\\)es|\\(n\\)o)",
               "response": "y",
               "addNewline": true
             }
