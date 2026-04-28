@@ -15,7 +15,7 @@ The status bar toggle now switches between two runtime states without dropping t
 
 | Tool | Terminal Command | Prompt Rule | Response | Status |
 |------|-----------------|-------------|----------|--------|
-| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want\|proceed\?)[\s\S]*?(?:\d+\s*\.?\s*Yes\|Yes\s*\/\s*No\|\b1\s*\.?\s*Yes\b[\s\S]{0,120}\b2\s*\.?\s*No\b)` | `1` (auto-newline) | Verified |
+| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want\|proceed\?)[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified |
 | **Claude Code** | `claude` | `Save file to continue[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified |
 | **Claude Code** | `claude` | `(?:❯\|›\|>)\s*\d+\s*\.?` (interactive list cursor) | Enter | Verified |
 | **Codex CLI** | `codex` | `Allow command\?` | Enter | Should work |
@@ -91,7 +91,7 @@ Then press `F5` to run in development mode, or package it:
 
 ```bash
 npx vsce package
-code --install-extension llm-auto-confirm-0.6.3.vsix
+code --install-extension llm-auto-confirm-0.6.4.vsix
 ```
 
 ## Usage
@@ -147,7 +147,7 @@ Built-in commands for Kilo Code, Claude Code (diff only), Cline, and Roo Code ar
 [
   {
     "name": "Claude Code (numbered prompt)",
-    "pattern": "(?:Allow|approve|Do you want|proceed\\?)[\\s\\S]*?(?:\\d+\\s*\\.?\\s*Yes|Yes\\s*\\/\\s*No|\\b1\\s*\\.?\\s*Yes\\b[\\s\\S]{0,120}\\b2\\s*\\.?\\s*No\\b)",
+    "pattern": "(?:Allow|approve|Do you want|proceed\\?)[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
     "response": "1",
     "addNewline": "auto"
   },
