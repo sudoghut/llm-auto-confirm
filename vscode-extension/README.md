@@ -15,12 +15,15 @@ The status bar toggle now switches between two runtime states without dropping t
 
 | Tool | Terminal Command | Prompt Rule | Response | Status |
 |------|-----------------|-------------|----------|--------|
-| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want)[\s\S]*?\d+\s*\.?\s*Yes` | `1` | Verified |
-| **Claude Code** | `claude` | `Save file to continue[\s\S]*?\d+\s*\.?\s*Yes` | `1` | Verified |
+| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want\|proceed\?)[\s\S]*?(?:\d+\s*\.?\s*Yes\|Yes\s*\/\s*No\|\b1\s*\.?\s*Yes\b[\s\S]{0,120}\b2\s*\.?\s*No\b)` | `1` (auto-newline) | Verified |
+| **Claude Code** | `claude` | `Save file to continue[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified |
+| **Claude Code** | `claude` | `(?:❯\|›\|>)\s*\d+\s*\.?` (interactive list cursor) | Enter | Verified |
 | **Codex CLI** | `codex` | `Allow command\?` | Enter | Should work |
-| **Aider** | `aider` | `(?:Y\/?n\|y\/N\|\(y\)es\|\(n\)o)` | `y` | Should work |
+| **Aider** | `aider` | `(?:[\[\(]\s*y\s*\/\s*n\s*[\]\)]\|\(y\)es\|\(n\)o)` | `y` + Enter | Should work |
 | **Goose** | `goose` | Fallback patterns | `1` | Should work |
 | **Any CLI tool** | User-configured | User-configured `promptRules` | User-configured | Extensible |
+
+> The Y/n rule requires bracket or parenthesis wrapping (`[y/n]`, `(y/N)`, `(y)es/(n)o`) to avoid misfiring on prose that contains a bare `y/n`.
 
 **Key:** Any LLM tool that runs in the terminal and prompts via text output can be supported by adding a `promptRule`.
 
@@ -88,7 +91,7 @@ Then press `F5` to run in development mode, or package it:
 
 ```bash
 npx vsce package
-code --install-extension llm-auto-confirm-0.4.1.vsix
+code --install-extension llm-auto-confirm-0.6.3.vsix
 ```
 
 ## Usage
@@ -144,15 +147,21 @@ Built-in commands for Kilo Code, Claude Code (diff only), Cline, and Roo Code ar
 [
   {
     "name": "Claude Code (numbered prompt)",
-    "pattern": "(?:Allow|approve|Do you want)[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
+    "pattern": "(?:Allow|approve|Do you want|proceed\\?)[\\s\\S]*?(?:\\d+\\s*\\.?\\s*Yes|Yes\\s*\\/\\s*No|\\b1\\s*\\.?\\s*Yes\\b[\\s\\S]{0,120}\\b2\\s*\\.?\\s*No\\b)",
     "response": "1",
-    "addNewline": false
+    "addNewline": "auto"
   },
   {
     "name": "Claude Code (save file prompt)",
     "pattern": "Save file to continue[\\s\\S]*?\\d+\\s*\\.?\\s*Yes",
     "response": "1",
-    "addNewline": false
+    "addNewline": "auto"
+  },
+  {
+    "name": "Claude Code (interactive list cursor)",
+    "pattern": "(?:\\u276F|\\u203A|>)\\s*\\d+\\s*\\.?",
+    "response": "",
+    "addNewline": true
   },
   {
     "name": "Codex (selection list)",
@@ -168,6 +177,14 @@ Built-in commands for Kilo Code, Claude Code (diff only), Cline, and Roo Code ar
   }
 ]
 ```
+
+**`addNewline` values:**
+
+| Value | Behavior |
+|---|---|
+| `true` | Append a newline after `response` (sends `response` + Enter). |
+| `false` | Send `response` only — no Enter. |
+| `"auto"` | Auto-detect: if the buffer shows an interactive list cursor (`❯` / `›`) on the matched option, only Enter is sent (the cursor already points at the choice); otherwise behaves like `true` (`response` + Enter). |
 
 ### Default Fallback Patterns
 
