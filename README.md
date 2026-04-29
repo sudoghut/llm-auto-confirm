@@ -126,14 +126,16 @@ code --install-extension llm-auto-confirm-0.6.4.vsix
 
 ### Supported Tools
 
+> **Testing status:** Only **Claude Code** and **Codex** have been tested at the code level against the actual CLI prompts. The built-in rules for other tools (Aider, Goose, Kilo Code, Cline, Roo Code, …) are written from each tool's documented prompt format but have **not** been verified end-to-end. Treat them as best-effort starting points — if a rule misfires or fails to match, please open an issue.
+
 | Tool | Mode | Status |
 |------|------|--------|
-| **Claude Code** (`claude` CLI) | Terminal | Verified |
-| **Codex** (`codex` CLI) | Terminal | Should work |
-| **Aider** | Terminal | Should work |
-| **Goose** | Terminal | Should work |
-| **Kilo Code** | WebView | Verified (via `toggleAutoApprove`) |
-| **Cline / Roo Code** | WebView | Unverified |
+| **Claude Code** (`claude` CLI) | Terminal | Verified (tested) |
+| **Codex** (`codex` CLI) | Terminal | Verified (tested) |
+| **Aider** | Terminal | Untested |
+| **Goose** | Terminal | Untested |
+| **Kilo Code** | WebView | Untested (rule wired via `toggleAutoApprove`) |
+| **Cline / Roo Code** | WebView | Untested |
 | **Codex** (WebView panel) | — | Not supported (no approval commands) |
 
 ### Configuration

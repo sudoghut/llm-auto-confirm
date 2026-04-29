@@ -13,14 +13,16 @@ The status bar toggle now switches between two runtime states without dropping t
 - **Active**: prompt matches are auto-confirmed.
 - **Observe Only**: prompt matches are logged, but no text is sent back to the terminal or WebView.
 
+> **Testing status:** Only **Claude Code** and **Codex** have been tested at the code level against the actual CLI prompts. Rules for **Aider**, **Goose**, and the WebView entries below are written from each tool's documented prompt format but have **not** been verified end-to-end. Treat them as best-effort starting points — if a rule misfires or fails to match, please open an issue.
+
 | Tool | Terminal Command | Prompt Rule | Response | Status |
 |------|-----------------|-------------|----------|--------|
-| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want\|proceed\?)[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified |
-| **Claude Code** | `claude` | `Save file to continue[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified |
-| **Claude Code** | `claude` | `(?:❯\|›\|>)\s*\d+\s*\.?` (interactive list cursor) | Enter | Verified |
-| **Codex CLI** | `codex` | `Allow command\?` | Enter | Should work |
-| **Aider** | `aider` | `(?:[\[\(]\s*y\s*\/\s*n\s*[\]\)]\|\(y\)es\|\(n\)o)` | `y` + Enter | Should work |
-| **Goose** | `goose` | Fallback patterns | `1` | Should work |
+| **Claude Code** | `claude` | `(?:Allow\|approve\|Do you want\|proceed\?)[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified (tested) |
+| **Claude Code** | `claude` | `Save file to continue[\s\S]*?\d+\s*\.?\s*Yes` | `1` (auto-newline) | Verified (tested) |
+| **Claude Code** | `claude` | `(?:❯\|›\|>)\s*\d+\s*\.?` (interactive list cursor) | Enter | Verified (tested) |
+| **Codex CLI** | `codex` | `Allow command\?` | Enter | Verified (tested) |
+| **Aider** | `aider` | `(?:[\[\(]\s*y\s*\/\s*n\s*[\]\)]\|\(y\)es\|\(n\)o)` | `y` + Enter | Untested |
+| **Goose** | `goose` | Fallback patterns | `1` | Untested |
 | **Any CLI tool** | User-configured | User-configured `promptRules` | User-configured | Extensible |
 
 > The Y/n rule requires bracket or parenthesis wrapping (`[y/n]`, `(y/N)`, `(y)es/(n)o`) to avoid misfiring on prose that contains a bare `y/n`.
@@ -31,24 +33,26 @@ The status bar toggle now switches between two runtime states without dropping t
 
 Calls known VS Code commands exposed by LLM extensions. This mode has significant limitations because most extensions handle permission prompts **inside their webview** and do not expose per-prompt approval commands.
 
+> **Testing status:** None of the WebView integrations below have been tested at the code level — the command IDs come from each extension's published manifest but the wiring has not been exercised end-to-end. If you rely on WebView mode, treat it as experimental and please report what works.
+
 | Extension | VS Code Command | What It Does | Limitation |
 |-----------|----------------|--------------|------------|
-| **Kilo Code** | `kilo-code.toggleAutoApprove` | Enables auto-approve mode (one-shot) | Toggles a mode, not per-prompt |
-| **Kilo Code** | `kilo-code.acceptInput` | Accepts pending input | |
-| **Claude Code** | `claude-vscode.acceptProposedDiff` | Accepts editor diff proposals | Does **NOT** approve webview tool-use prompts |
-| **Cline** | `cline.approveTask` | Approves pending task | Not verified (not installed) |
-| **Roo Code** | `roo-cline.approveTask` | Approves pending task | Not verified (not installed) |
+| **Kilo Code** | `kilo-code.toggleAutoApprove` | Enables auto-approve mode (one-shot) | Toggles a mode, not per-prompt; untested |
+| **Kilo Code** | `kilo-code.acceptInput` | Accepts pending input | Untested |
+| **Claude Code** | `claude-vscode.acceptProposedDiff` | Accepts editor diff proposals | Does **NOT** approve webview tool-use prompts; untested |
+| **Cline** | `cline.approveTask` | Approves pending task | Untested (not installed) |
+| **Roo Code** | `roo-cline.approveTask` | Approves pending task | Untested (not installed) |
 | **Codex** | *(none)* | — | No approval commands exposed |
 
 **Recommendation per tool:**
 
 | Tool | Best Approach |
 |------|--------------|
-| Claude Code | Use **terminal mode** (`claude` CLI). WebView `acceptProposedDiff` only handles editor diffs. |
-| Codex | Use **terminal mode** (`codex` CLI) or Codex's own `--full-auto` flag. WebView has no commands. |
-| Kilo Code | **WebView mode** works via `toggleAutoApprove`. |
-| Cline / Roo Code | **WebView mode** may work (unverified). |
-| Aider / Goose | Use **terminal mode**. These are terminal-only tools. |
+| Claude Code | Use **terminal mode** (`claude` CLI) — tested. WebView `acceptProposedDiff` only handles editor diffs. |
+| Codex | Use **terminal mode** (`codex` CLI) — tested. Or use Codex's own `--full-auto` flag. WebView has no commands. |
+| Kilo Code | **WebView mode** wires `toggleAutoApprove` but is untested — treat as experimental. |
+| Cline / Roo Code | **WebView mode** may work (untested). |
+| Aider / Goose | Use **terminal mode** (untested but rules are wired up). These are terminal-only tools. |
 
 ## How It Works
 
