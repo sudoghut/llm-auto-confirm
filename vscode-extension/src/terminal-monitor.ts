@@ -70,10 +70,16 @@ export class TerminalMonitor {
    *  VS Code's shell integration stops yielding data on the main execution stream
    *  (e.g., after sub-executions end, or for Claude Code's internal bash tool). */
   private static readonly PERIODIC_RESCAN_MS = 3000;
+  /** If no [raw:*] chunk arrives for this long while a buffer exists, log a stall
+   *  marker. Helps distinguish "stream silent" (no data delivered) from "buffer
+   *  truncated" (data arrived but evicted). */
+  private static readonly STALL_THRESHOLD_MS = 9000;
 
   private outputBuffer = "";
   private isActive = true;
   private lastConfirmTime = 0;
+  private lastDataAt = Date.now();
+  private stallReported = false;
   private _confirmCount = 0;
   private compiledRules: CompiledRule[];
   private compiledFallbackPatterns: RegExp[];
@@ -133,6 +139,13 @@ export class TerminalMonitor {
     this.periodicTimer = setInterval(() => {
       if (!this.isActive) return;
       if (this.outputBuffer.length === 0) return;
+      const sinceData = Date.now() - this.lastDataAt;
+      if (sinceData > TerminalMonitor.STALL_THRESHOLD_MS && !this.stallReported) {
+        this.debugLog(
+          `[stall] No new [raw] data for ${(sinceData / 1000).toFixed(1)}s, buffer frozen at ${this.outputBuffer.length} chars`
+        );
+        this.stallReported = true;
+      }
       this.debugLog(`[periodic] Re-scanning buffer (${this.outputBuffer.length} chars)`);
       this.checkForPrompt();
     }, TerminalMonitor.PERIODIC_RESCAN_MS);
@@ -163,6 +176,8 @@ export class TerminalMonitor {
         if (!this.isActive) break;
         this.totalBytesRead += data.length;
         this.totalChunksRead++;
+        this.lastDataAt = Date.now();
+        this.stallReported = false;
         if (data.length > 0) {
           const preview = data.substring(0, 200).replace(/\n/g, "\\n");
           this.debugLog(`[raw:${label}] ${preview}${data.length > 200 ? "..." : ""}`);
