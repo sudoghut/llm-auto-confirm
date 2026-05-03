@@ -36,8 +36,28 @@
       {
         "command": "llm-auto-confirm.toggleWebview",
         "title": "LLM Auto Confirm: Toggle WebView Mode"
+      },
+      {
+        "command": "llm-auto-confirm.enableDebug",
+        "title": "LLM Auto Confirm: Enable Debug Logging (currently OFF)"
+      },
+      {
+        "command": "llm-auto-confirm.disableDebug",
+        "title": "LLM Auto Confirm: Disable Debug Logging (currently ON)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "llm-auto-confirm.enableDebug",
+          "when": "!llmAutoConfirm.debug"
+        },
+        {
+          "command": "llm-auto-confirm.disableDebug",
+          "when": "llmAutoConfirm.debug"
+        }
+      ]
+    },
     "configuration": {
       "title": "LLM Auto Confirm",
       "properties": {

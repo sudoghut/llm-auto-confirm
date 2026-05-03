@@ -113,10 +113,14 @@ function updateStatusBar() {
     const mode = isWebviewEnabled ? "Terminal+WebView" : "Terminal";
     const stateLabel = isAutoConfirmEnabled ? "Active" : "Observe Only";
     const icon = isAutoConfirmEnabled ? "$(eye)" : "$(debug-pause)";
+    const debugOn = vscode.workspace
+      .getConfiguration("llmAutoConfirm")
+      .get<boolean>("debug", false);
+    const debugSuffix = debugOn ? " [debug]" : "";
     if (terminalCount > 0) {
-      statusBarItem.text = `${icon} Auto-Confirm: Watching (${stateLabel}) [${mode}]`;
+      statusBarItem.text = `${icon} Auto-Confirm: Watching (${stateLabel}) [${mode}]${debugSuffix}`;
     } else {
-      statusBarItem.text = `${icon} Auto-Confirm: ${stateLabel} [${mode}]`;
+      statusBarItem.text = `${icon} Auto-Confirm: ${stateLabel} [${mode}]${debugSuffix}`;
     }
     statusBarItem.backgroundColor = isAutoConfirmEnabled
       ? new vscode.ThemeColor("statusBarItem.warningBackground")
@@ -124,6 +128,7 @@ function updateStatusBar() {
     statusBarItem.tooltip = [
       `State: ${stateLabel}`,
       `Mode: ${mode}`,
+      `Debug logging: ${debugOn ? "on" : "off"}`,
       terminalCount > 0
         ? `Monitoring ${terminalCount} terminal(s)`
         : "Waiting for LLM commands",
@@ -216,6 +221,27 @@ function stopWebviewMonitor() {
   }
 }
 
+async function setDebugLogging(value: boolean) {
+  const cfg = vscode.workspace.getConfiguration("llmAutoConfirm");
+  await cfg.update("debug", value, vscode.ConfigurationTarget.Global);
+  log(`Debug logging ${value ? "enabled" : "disabled"}.`);
+  vscode.window.showInformationMessage(
+    `LLM Auto-Confirm: debug logging ${value ? "ON" : "OFF"}.`
+  );
+  // Context key + status bar refresh happen via the onDidChangeConfiguration handler.
+}
+
+function syncDebugContext() {
+  const debugOn = vscode.workspace
+    .getConfiguration("llmAutoConfirm")
+    .get<boolean>("debug", false);
+  vscode.commands.executeCommand(
+    "setContext",
+    "llmAutoConfirm.debug",
+    debugOn
+  );
+}
+
 function toggleWebviewMonitor() {
   if (isWebviewEnabled) {
     stopWebviewMonitor();
@@ -247,6 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
     100
   );
   statusBarItem.command = "llm-auto-confirm.toggle";
+  syncDebugContext();
   updateStatusBar();
 
   context.subscriptions.push(
@@ -259,6 +286,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "llm-auto-confirm.toggleWebview",
       toggleWebviewMonitor
+    ),
+    vscode.commands.registerCommand("llm-auto-confirm.enableDebug", () =>
+      setDebugLogging(true)
+    ),
+    vscode.commands.registerCommand("llm-auto-confirm.disableDebug", () =>
+      setDebugLogging(false)
     ),
     statusBarItem,
     outputChannel
@@ -361,6 +394,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("llmAutoConfirm")) return;
+      syncDebugContext();
       const config = getConfig();
 
       if (config.enabled !== isMonitoring) {
