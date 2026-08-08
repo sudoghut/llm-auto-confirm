@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 
 /**
- * Known LLM extension approval commands — verified against real extensions.
+ * Known LLM extension approval commands -- verified against real extensions.
  *
  * IMPORTANT: Most webview-based LLM extensions handle permission prompts
  * INSIDE their webview and do NOT expose per-prompt approval commands.
@@ -192,7 +192,7 @@ export class WebviewMonitor {
         valid.push(entry);
       } else {
         this.log(
-          `[webview] REJECTED user command "${entry.command}" — ` +
+          `[webview] REJECTED user command "${entry.command}" -- ` +
             `does not match any allowed prefix (${ALLOWED_COMMAND_PREFIXES.join(", ")}). ` +
             `This prevents potential workspace config injection.`
         );
@@ -288,7 +288,7 @@ export class WebviewMonitor {
         if (entry.oneShot) {
           this.executedOneShots.add(entry.command);
           this.log(
-            `[webview] Executed one-shot "${entry.name}" (${entry.command}) — will not repeat`
+            `[webview] Executed one-shot "${entry.name}" (${entry.command}) -- will not repeat`
           );
         } else {
           this.debugLog(

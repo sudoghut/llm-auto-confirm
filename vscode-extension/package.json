@@ -1,8 +1,8 @@
 {
   "name": "llm-auto-confirm",
   "displayName": "LLM Auto Confirm",
-  "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex) in VS Code terminals and WebView panels",
-  "version": "0.6.6",
+  "description": "Auto-confirm permission prompts for LLM coding assistants (Claude Code, Aider, Goose, Codex). For Claude Code the hook is machine-global (all claude sessions on this machine are affected); for other tools it is limited to VS Code terminals and WebView panels.",
+  "version": "0.7.0",
   "publisher": "sudoghut",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,14 @@
       {
         "command": "llm-auto-confirm.disableDebug",
         "title": "LLM Auto Confirm: Disable Debug Logging (currently ON)"
+      },
+      {
+        "command": "llm-auto-confirm.uninstallClaudeHook",
+        "title": "LLM Auto Confirm: Uninstall Claude Code Hook"
+      },
+      {
+        "command": "llm-auto-confirm.reinstallClaudeHook",
+        "title": "LLM Auto Confirm: Reinstall Claude Code Hook"
       }
     ],
     "menus": {
@@ -162,7 +170,7 @@
                   { "type": "boolean" },
                   { "type": "string", "enum": ["auto"] }
                 ],
-                "description": "Whether to append a newline (Enter) after the response. Use \"auto\" to auto-detect interactive list prompts (❯ cursor → Enter only) vs non-interactive (response + Enter)."
+                "description": "Whether to append a newline (Enter) after the response. Use \"auto\" to auto-detect interactive list prompts (❯ cursor -> Enter only) vs non-interactive (response + Enter)."
               }
             },
             "required": ["name", "pattern", "response", "addNewline"]
@@ -188,7 +196,7 @@
         "llmAutoConfirm.webviewAutoConfirm": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Experimental.** Enable command-based auto-confirm for WebView LLM extensions (e.g., Claude Code, Cline). This calls known approval commands via the VS Code API — no OS-level keystroke simulation."
+          "markdownDescription": "**Experimental.** Enable command-based auto-confirm for WebView LLM extensions (e.g., Claude Code, Cline). This calls known approval commands via the VS Code API -- no OS-level keystroke simulation."
         },
         "llmAutoConfirm.webviewPollInterval": {
           "type": "number",
@@ -224,7 +232,8 @@
     "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "watch": "npm run bundle -- --watch",
     "package": "npm run bundle && vsce package",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node test/run.js"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
